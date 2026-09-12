@@ -103,6 +103,7 @@ jobs:
       - name: Baixar digests
         uses: actions/download-artifact@v4
         with:
+          pattern: digest-*
           path: digests
 
       - name: Gerar image-manifest.json (nome, serviço, commit, tag, digest)
