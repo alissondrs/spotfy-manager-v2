@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  PIP_CACHE: pip
+
+jobs:
+  # ============================================================
+  # Os nomes destes jobs devem ser MANTIDOS ESTÁVEIS: são usados
+  # como required checks na proteção de branches (develop/main).
+  # ============================================================
+
+  test-contract:
+    name: test-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: "**/requirements*.txt"
+
+      - name: Instalar contracts
+        run: pip install -e ./contracts
+
+      - name: Instalar dependências dos serviços + testes
+        run: |
+          for s in identity fileimport playlist catalog bpm-match library report web; do
+            pip install -q -r services/$s/requirements.txt
+          done
+          pip install -q pytest
+
+      - name: Testes dos contratos
+        run: python -m pytest tests/contract -x -q
+
+  test-e2e:
+    name: test-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: "**/requirements*.txt"
+
+      - name: Instalar contracts
+        run: pip install -e ./contracts
+
+      - name: Instalar dependências dos serviços + testes
+        run: |
+          for s in identity fileimport playlist catalog bpm-match library report web; do
+            pip install -q -r services/$s/requirements.txt
+          done
+          pip install -q pytest httpx uvicorn
+
+      - name: Testes E2E (fluxo completo)
+        run: python -m pytest tests/e2e -x -q
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Instalar contracts
+        run: pip install -e ./contracts
+
+      - name: Lint (compileall + ruff)
+        run: |
+          python -m compileall -q contracts services
+          pip install -q ruff
+          ruff check contracts services
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Instalar dependências de todos os serviços
+        run: |
+          pip install -e ./contracts
+          for s in identity fileimport playlist catalog bpm-match library report web; do
+            pip install -q -r services/$s/requirements.txt
+          done
+
+      - name: Auditoria de dependências (pip-audit)
+        run: |
+          pip install -q pip-audit
+          pip-audit -r <(cat services/*/requirements.txt | sort -u)
+
+  compose-validate:
+    name: compose-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar Docker Compose
+        run: docker compose config --quiet
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 é necessário para o Gitleaks comparar todo o PR/histórico
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks scan (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        # Gitleaks falha em segredos encontrados; o token license é opcional.
+
+  # Matriz de build das 8 imagens. Nome do job: docker-build-<serviço>.
+  docker-build:
+    name: docker-build-${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [web, identity, fileimport, playlist, catalog, bpm-match, library, report]
+        include:
+          - service: web
+            port: 8000
+          - service: identity
+            port: 8101
+          - service: fileimport
+            port: 8102
+          - service: playlist
+            port: 8103
+          - service: catalog
+            port: 8104
+          - service: bpm-match
+            port: 8105
+          - service: library
+            port: 8106
+          - service: report
+            port: 8107
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build imagem (${{ matrix.service }})
+        run: |
+          docker build \
+            --build-arg SERVICE=${{ matrix.service }} \
+            --build-arg SERVICE_PORT=${{ matrix.port }} \
+            --tag spotfy-manager-v2:${{ matrix.service }} \
+            .

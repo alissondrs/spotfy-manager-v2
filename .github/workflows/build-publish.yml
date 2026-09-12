@@ -1,0 +1,133 @@
+name: build-publish
+
+on:
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY_IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/spotfy-manager-v2
+
+jobs:
+  publish:
+    name: publish-${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [web, identity, fileimport, playlist, catalog, bpm-match, library, report]
+        include:
+          - service: web
+            port: 8000
+          - service: identity
+            port: 8101
+          - service: fileimport
+            port: 8102
+          - service: playlist
+            port: 8103
+          - service: catalog
+            port: 8104
+          - service: bpm-match
+            port: 8105
+          - service: library
+            port: 8106
+          - service: report
+            port: 8107
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolver prefixo do ambiente
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "prefix=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=develop" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Definir tag de imagem (imutável por commit)
+        id: meta
+        run: |
+          echo "tag=${{ steps.env.outputs.prefix }}-${{ matrix.service }}-sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build e push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            SERVICE_PORT=${{ matrix.port }}
+          tags: ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.tag }}
+          provenance: false
+          metadata-files: /tmp/metadata.json
+
+      - name: Registrar digest real da imagem
+        run: |
+          digest=$(jq -r '."containerimage.digest"' /tmp/metadata.json)
+          printf '{"service":"%s","tag":"%s","digest":"%s"}\n' \
+            "${{ matrix.service }}" \
+            "${{ steps.meta.outputs.tag }}" \
+            "$digest" > digest-${{ matrix.service }}.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.service }}
+          path: digest-${{ matrix.service }}.json
+          retention-days: 7
+
+  manifest:
+    name: image-manifest
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolver prefixo do ambiente
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "prefix=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=develop" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Baixar digests
+        uses: actions/download-artifact@v4
+        with:
+          path: digests
+
+      - name: Gerar image-manifest.json (nome, serviço, commit, tag, digest)
+        id: gen
+        run: |
+          json=''
+          for f in digests/digest-*/*.json; do
+            entry=$(cat "$f")
+            if [ -z "$json" ]; then json="$entry"; else json="$json,$entry"; fi
+          done
+          cat > image-manifest.json <<EOF
+          {
+            "repo": "${{ env.REGISTRY_IMAGE }}",
+            "branch": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "env": "${{ steps.env.outputs.prefix }}",
+            "images": [$json]
+          }
+          EOF
+          jq . image-manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-manifest-${{ steps.env.outputs.prefix }}-${{ github.sha }}
+          path: image-manifest.json
+          retention-days: 7
