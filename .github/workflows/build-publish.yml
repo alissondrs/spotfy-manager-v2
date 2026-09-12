@@ -70,15 +70,13 @@ jobs:
             SERVICE_PORT=${{ matrix.port }}
           tags: ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.tag }}
           provenance: false
-          metadata-files: /tmp/metadata.json
 
       - name: Registrar digest real da imagem
         run: |
-          digest=$(jq -r '."containerimage.digest"' /tmp/metadata.json)
           printf '{"service":"%s","tag":"%s","digest":"%s"}\n' \
             "${{ matrix.service }}" \
             "${{ steps.meta.outputs.tag }}" \
-            "$digest" > digest-${{ matrix.service }}.json
+            "${{ steps.build.outputs.digest }}" > digest-${{ matrix.service }}.json
 
       - uses: actions/upload-artifact@v4
         with:
