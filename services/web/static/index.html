@@ -9,43 +9,21 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="dot"></span> BPM Match <small>spotfy-manager-v2</small></div>
-  <nav id="nav" class="hidden">
+  <nav id="nav">
     <button data-tab="dashboard" class="active">Dashboard</button>
     <button data-tab="import">Importar</button>
     <button data-tab="analyze">BPM Match</button>
     <button data-tab="library">Biblioteca</button>
     <button data-tab="reports">Relatórios</button>
     <span class="spacer"></span>
-    <span id="user-label"></span>
-    <button id="logout" class="ghost">Sair</button>
+    <span id="session-badge" class="badge-mid" title="Sessão anônima por navegador">Sessão anônima</span>
+    <button id="new-session" class="ghost">Nova sessão</button>
   </nav>
 </header>
 
+<div id="banner" class="banner hidden" role="region" aria-live="polite"></div>
+
 <main id="app" class="container">
-
-  <!-- LOGIN -->
-  <section id="view-login" class="card login-card">
-    <h1>Entrar</h1>
-    <p class="muted">Acesso local ao BPM Match.</p>
-    <form id="login-form">
-      <label>Usuário<input id="login-user" autocomplete="username" required></label>
-      <label>Senha<input id="login-pass" type="password" autocomplete="current-password" required></label>
-      <button type="submit" class="primary">Entrar</button>
-    </form>
-    <p class="muted">Primeira vez? <a href="#" id="go-register">Registrar usuário</a></p>
-    <p id="login-error" class="error hidden"></p>
-  </section>
-
-  <section id="view-register" class="card login-card hidden">
-    <h1>Criar conta</h1>
-    <form id="register-form">
-      <label>Usuário<input id="reg-user" minlength="3" required></label>
-      <label>Senha (mín. 8)<input id="reg-pass" type="password" minlength="8" required></label>
-      <button type="submit" class="primary">Criar</button>
-    </form>
-    <p class="muted">Já tem conta? <a href="#" id="go-login">Entrar</a></p>
-    <p id="register-error" class="error hidden"></p>
-  </section>
 
   <!-- DASHBOARD -->
   <section id="view-dashboard" class="tab-view hidden">
@@ -68,14 +46,12 @@
     <div class="two-col">
       <div class="card">
         <h2>Spotify</h2>
-        <div id="spotify-status" class="muted"></div>
-        <button id="connect-spotify" class="ghost">Conectar Spotify</button>
-        <div id="spotify-token-section" class="hidden">
-          <label>Ou cole o token de acesso manualmente:</label>
-          <input id="spotify-token-input" placeholder="BQC... ou BQD..." />
-          <button id="save-spotify-token" class="primary">Salvar token</button>
+        <div id="spotify-status" class="muted" aria-live="polite"></div>
+        <div id="spotify-fallback" class="hidden"></div>
+        <div class="actions">
+          <button id="connect-spotify" class="ghost">Conectar Spotify</button>
+          <button id="load-playlists" class="ghost">Carregar playlists</button>
         </div>
-        <button id="load-playlists" class="ghost">Carregar playlists</button>
         <select id="playlist-select" class="hidden"></select>
         <button id="import-playlist" class="primary hidden">Importar selecionada</button>
         <p id="spotify-error" class="error hidden"></p>
@@ -85,7 +61,7 @@
         <h2>Arquivo (Markdown / CSV / JSON)</h2>
         <input type="file" id="file-input" accept=".md,.csv,.json,.markdown">
         <button id="upload-file" class="primary">Enviar arquivo</button>
-        <div id="file-result" class="muted"></div>
+        <div id="file-result" class="muted" aria-live="polite"></div>
       </div>
     </div>
   </section>
@@ -102,10 +78,10 @@
           <label>BPM alvo<input id="target-bpm" type="number" min="40" max="240" step="1" value="120"></label>
           <label>Tolerância (±<span id="tol-label">3</span>)<input id="tolerance" type="range" min="1" max="10" value="3"></label>
           <label>Nome da análise<input id="analysis-name" value="Meu set"></label>
-          <button type="submit" class="primary">Analisar</button>
+          <button type="submit" class="primary" id="analyze-btn">Analisar</button>
         </div>
       </form>
-      <p id="analyze-error" class="error hidden"></p>
+      <p id="analyze-error" class="error hidden" aria-live="polite"></p>
     </div>
     <div id="analysis-result" class="hidden">
       <div class="card">
@@ -146,7 +122,7 @@
       <p id="dryrun-info" class="muted"></p>
       <table id="missing-table" class="compact"></table>
       <button id="confirm-download" class="danger hidden">Confirmar download do lote</button>
-      <p id="download-feedback" class="muted hidden"></p>
+      <p id="download-feedback" class="muted hidden" aria-live="polite"></p>
       <div id="download-result" class="hidden"></div>
     </div>
   </section>

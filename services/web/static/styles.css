@@ -62,3 +62,14 @@ progress { width: 70%; height: 6px; }
 .steps li { margin: 6px 0; color: #c4cad5; }
 .muted { margin: 4px 0; }
 #file-result { font-size: 13px; }
+
+.banner { max-width: 1060px; margin: 14px auto 0; padding: 12px 16px; background: #2a2416; border: 1px solid #d29922; border-radius: 10px; font-size: 13px; }
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+.compact th, .compact td { padding: 6px 8px; }
+input[type="checkbox"] { width: auto; margin: 0; accent-color: #58c6b8; }
+.table-card { overflow-x: auto; }
+#session-badge { font-size: 12px; padding: 6px 10px; border-radius: 999px; background: #212a38; color: #c4cad5; white-space: nowrap; }
+#spotify-fallback span { color: #8b93a7; font-size: 13px; }
+#spotify-fallback a.ghost { display: inline-block; margin: 6px 0 2px; }
+#banner.hidden { display: none; }

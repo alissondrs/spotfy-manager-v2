@@ -1,16 +1,19 @@
-"""Playlist Service — integração Spotify, extração de playlists e normalização."""
+"""Playlist Service — integração Spotify (URLs configuráveis por ambiente),
+extração de playlists e normalização estável (referências `spotify:<id>`)."""
 
 from __future__ import annotations
 
 import os
 from typing import Optional
 
+import httpx
 from fastapi import Depends, Header
 from pydantic import BaseModel
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
 from spotfy_contracts.ids import (
     detect_reference_source,
+    parse_source_reference,
     parse_spotify_reference,
 )
 from spotfy_contracts.schemas import TrackInput, utcnow_iso
@@ -21,86 +24,103 @@ SERVICE_NAME = "playlist"
 app = build_app(SERVICE_NAME)
 cfg = app.state.config
 
-SCOPES = "user-library-read playlist-read-private playlist-read-collaborative"
 root_sync = JsonStore(os.path.join(cfg.data_dir, "synced_playlists.json"))
 
-# Token do Spotify recebido do web service (via header X-Spotify-Token)
-_external_token: str | None = None
+
+def _token(token_override: str | None) -> str:
+    token = (token_override or "").strip() or cfg.spotify_access_token
+    if not token:
+        raise_error("SPOTIFY_AUTH_EXPIRED", "Conecte o Spotify para listar as suas playlists.")
+    return token
 
 
-def _sp_client(token_override: str | None = None):
+def _raise_for_status(resp: httpx.Response, context: str = "") -> None:
+    if resp.status_code in (200, 204):
+        return
+    detail = f"{context}: " if context else f"{context}"
+    if resp.status_code == 401:
+        raise_error("SPOTIFY_AUTH_EXPIRED")
+    if resp.status_code == 403:
+        raise_error("PLAYLIST_INACCESSIBLE")
+    if resp.status_code == 404:
+        raise_error("PLAYLIST_NOT_FOUND")
+    if resp.status_code == 429:
+        raise_error("SPOTIFY_API_ERROR", "Spotify limitou as requisições (429). Tente novamente em instantes.")
+    raise_error("SPOTIFY_API_ERROR", f"{detail}HTTP {resp.status_code}".strip())
+
+
+def _api_get(token: str, url: str) -> dict:
     try:
-        import spotipy
-    except Exception:
-        raise_error("SPOTIFY_AUTH_FAILED", "Spotipy não instalado no serviço.")
-    # Token explícito (via header ou config)
-    token = token_override or _external_token or cfg.spotify_access_token
-    if token:
-        return spotipy.Spotify(auth=token)
-    # Client credentials (não funciona para playlists do usuário)
-    if cfg.spotify_client_id and cfg.spotify_client_secret:
-        from spotipy.oauth2 import SpotifyClientCredentials
-        auth = SpotifyClientCredentials(
-            client_id=cfg.spotify_client_id, client_secret=cfg.spotify_client_secret)
-        return spotipy.Spotify(auth_manager=auth)
-    raise_error("SPOTIFY_AUTH_EXPIRED", "Faça login no Spotify via UI (ícone de playlist).")
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
+    except httpx.RequestError:
+        raise_error("SPOTIFY_API_ERROR", "Spotify indisponível ou sem resposta.")
+    _raise_for_status(resp, "Spotify")
+    return resp.json()
 
 
-class PlaylistReq(BaseModel):
-    reference: str
+def _paginate(token: str, first_url: str) -> list[dict]:
+    out: list[dict] = []
+    url: str | None = first_url
+    while url:
+        data = _api_get(token, url)
+        out.extend(data.get("items") or [])
+        url = data.get("next")
+    return out
 
 
-def _resolve_playlist(sp, reference: str) -> dict:
-    kind = detect_reference_source(reference)
+def _resolve_playlist(token: str, reference: str) -> dict:
+    ref = (reference or "").strip()
+    # Formato estável do fluxo: spotify:<playlist_id>
+    parsed_ref = parse_source_reference(ref)
+    if parsed_ref and parsed_ref[0] == "spotify":
+        pid = parsed_ref[1]
+        meta = {"source": "playlist", "name": pid, "id": pid, "owner": None}
+        return _fill_playlist_meta(token, meta)
+    kind = detect_reference_source(ref)
     if kind == "favorites":
         return {"source": "favorites", "name": "Favoritas (Músicas Salvas)", "id": "favorites_saved"}
     if kind in ("uri", "url", "id"):
-        parsed = parse_spotify_reference(reference)
+        parsed = parse_spotify_reference(ref)
         if not parsed:
             raise_error("INVALID_REFERENCE_TYPE")
         pkind, pid = parsed
         if pkind not in ("playlist", "unknown"):
             raise_error("INVALID_REFERENCE_TYPE", f"Tipo '{pkind}' não suportado. Use uma playlist ou favoritas.")
-        try:
-            p = sp.playlist(pid)
-        except Exception as exc:
-            _map_spotify_exc(exc)
-            raise_error("PLAYLIST_NOT_FOUND")
-        return {"source": "playlist", "name": p.get("name") or pid, "id": pid,
-                "owner": (p.get("owner") or {}).get("display_name")}
-    # nome
-    playlists = []
-    result = sp.current_user_playlists(limit=50)
-    while result:
-        playlists.extend(result.get("items", []))
-        result = sp.next(result) if result.get("next") else None
-    found = next((p for p in playlists if p.get("name", "").lower() == reference.lower()), None)
+        meta = {"source": "playlist", "name": pid, "id": pid, "owner": None}
+        return _fill_playlist_meta(token, meta)
+    # nome: busca nas playlists do usuário
+    playlists = _paginate(token, f"{cfg.spotify_api_url}/v1/me/playlists")
+    found = next((p for p in playlists if p.get("name", "").lower() == ref.lower()), None)
     if not found:
-        raise_error("PLAYLIST_NOT_FOUND", f"Playlist '{reference}' não encontrada.")
+        raise_error("PLAYLIST_NOT_FOUND", f"Playlist '{ref}' não encontrada.")
     return {"source": "playlist", "name": found["name"], "id": found["id"],
             "owner": (found.get("owner") or {}).get("display_name")}
 
 
-def _fetch_tracks(sp, meta: dict) -> list[TrackInput]:
+def _fill_playlist_meta(token: str, meta: dict) -> dict:
+    data = _api_get(token, f"{cfg.spotify_api_url}/v1/playlists/{meta['id']}")
+    meta["name"] = (data.get("name") or meta["id"])
+    meta["owner"] = ((data.get("owner") or {}).get("display_name")) if data.get("owner") else None
+    return meta
+
+
+def _fetch_tracks(token: str, meta: dict) -> list[TrackInput]:
     tracks: list[TrackInput] = []
     if meta["source"] == "favorites":
-        result = sp.current_user_saved_tracks(limit=50)
-        while result:
-            for item in result.get("items", []):
-                trk = item.get("track")
-                if not trk:
-                    continue
-                tracks.append(_to_input(trk, item.get("added_at")))
-            result = sp.next(result) if result.get("next") else None
+        items = _paginate(token, f"{cfg.spotify_api_url}/v1/me/tracks")
+        for item in items:
+            trk = item.get("track")
+            if not trk:
+                continue
+            tracks.append(_to_input(trk, item.get("added_at")))
     else:
-        result = sp.playlist_items(meta["id"], limit=100)
-        while result:
-            for item in result.get("items", []):
-                trk = item.get("track") or item.get("item")
-                if not trk:
-                    continue
-                tracks.append(_to_input(trk, item.get("added_at")))
-            result = sp.next(result) if result.get("next") else None
+        items = _paginate(token, f"{cfg.spotify_api_url}/v1/playlists/{meta['id']}/tracks")
+        for item in items:
+            trk = item.get("track") or item.get("item")
+            if not trk:
+                continue
+            tracks.append(_to_input(trk, item.get("added_at")))
     return tracks
 
 
@@ -119,18 +139,8 @@ def _to_input(trk: dict, added_at: Optional[str]) -> TrackInput:
     )
 
 
-def _map_spotify_exc(exc: Exception) -> None:
-    try:
-        status = getattr(exc, "http_status", None) or getattr(exc, "status", None)
-    except Exception:
-        status = None
-    if status == 401:
-        raise_error("SPOTIFY_AUTH_EXPIRED")
-    if status == 403:
-        raise_error("PLAYLIST_INACCESSIBLE")
-    if status == 404:
-        raise_error("PLAYLIST_NOT_FOUND")
-    raise_error("SPOTIFY_API_ERROR", str(exc)[:200])
+class PlaylistReq(BaseModel):
+    reference: str
 
 
 def _require_user(authorization: str | None = Header(default=None)) -> str:
@@ -142,18 +152,18 @@ def list_playlists(
     username: str = Depends(_require_user),
     spotify_token: str | None = Header(default=None, alias="X-Spotify-Token"),
 ) -> dict:
-    sp = _sp_client(token_override=spotify_token)
-    playlists = []
-    result = sp.current_user_playlists(limit=50)
-    while result:
-        for p in result.get("items", []):
-            playlists.append({
-                "id": p.get("id"), "name": p.get("name"),
-                "owner": (p.get("owner") or {}).get("display_name"),
-                "tracks_total": (p.get("tracks") or {}).get("total"),
-            })
-        result = sp.next(result) if result.get("next") else None
-    return {"playlists": playlists}
+    token = _token(spotify_token)
+    playlists = _paginate(token, f"{cfg.spotify_api_url}/v1/me/playlists")
+    items = []
+    for p in playlists:
+        if not p or not p.get("id"):
+            continue
+        items.append({
+            "id": p.get("id"), "name": p.get("name"),
+            "owner": (p.get("owner") or {}).get("display_name"),
+            "tracks_total": (p.get("tracks") or {}).get("total"),
+        })
+    return {"playlists": items}
 
 
 @app.post("/import")
@@ -162,9 +172,9 @@ def import_playlist(
     username: str = Depends(_require_user),
     spotify_token: str | None = Header(default=None, alias="X-Spotify-Token"),
 ) -> dict:
-    sp = _sp_client(token_override=spotify_token)
-    meta = _resolve_playlist(sp, payload.reference)
-    tracks = _fetch_tracks(sp, meta)
+    token = _token(spotify_token)
+    meta = _resolve_playlist(token, payload.reference)
+    tracks = _fetch_tracks(token, meta)
     if not tracks:
         raise_error("PARSED_TRACKS_EMPTY", f"Playlist '{meta['name']}' sem faixas.")
     key = meta["id"]

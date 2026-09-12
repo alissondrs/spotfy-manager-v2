@@ -33,11 +33,13 @@ lê as URLs dos demais de `*_URL` do ambiente (presentes no `.env` para `127.0.0
 
 ### Primeiro acesso
 
-1. Abra http://127.0.0.1:8000.
-2. Na tela de login, clique em **Registrar usuário** (ou, em desenvolvimento explícito,
-   habilite `IDENTITY_ENABLE_BOOTSTRAP=1` e chame
-   `curl -s http://127.0.0.1:8101/_debug/bootstrap` → `admin`/`admin12345`).
-3. Importe uma playlist (Spotify — requer credenciais — ou envie um arquivo md/csv/json)
+1. Abra http://127.0.0.1:8000 — a UI abre no dashboard, **sem login**,
+   com o badge "Sessão anônima".
+2. Para o Spotify: crie o app em https://developer.spotify.com/dashboard,
+   copie o `SPOTIFY_CLIENT_ID` para o `.env` e adicione `SPOTIFY_REDIRECT_URI`
+   nas Redirect URIs do app. Clique em **Conectar Spotify** (popup; se bloqueado,
+   a UI oferece um link alternativo).
+3. Importe uma playlist do Spotify (`spotify:<id>`) ou envie um arquivo md/csv/json
    e rode o **BPM Match**.
 
 ## 2. Modo container
@@ -98,8 +100,18 @@ docker compose --profile grafana up -d   # http://localhost:3000 (admin/admin pa
 | `LOG_LEVEL` | `INFO` | logging |
 | `TIDAL_MOCK` | `0` (`1` no compose) | catálogo determinístico sem Tidal |
 | `HIFI_API_URL` | — | hifi-api externo (modo real) |
-| `SPOTIFY_ACCESS_TOKEN` | — | token direto do Spotify |
-| `SPOTIFY_CLIENT_ID/SECRET` | — | client-credentials do Spotify |
+| `SPOTIFY_CLIENT_ID` | — | app Spotify (Authorization Code + PKCE) |
+| `SPOTIFY_REDIRECT_URI` | `http://127.0.0.1:8000/api/auth/spotify/callback` | callback OAuth (precisa estar cadastrado no app) |
+| `SPOTIFY_AUTH_URL/TOKEN_URL/API_URL` | URLs públicas do Spotify | sobrescrever em testes/proxy (ex.: fake Spotify) |
+| `SPOTIFY_SCOPES` | `user-library-read playlist-read-private playlist-read-collaborative` | escopos pedidos no OAuth |
+| `SPOTIFY_ACCESS_TOKEN` | — | fallback legado de token fixo (sem prioridade) |
+| `WEB_TOKEN_ENCRYPTION_KEY` | — | chave Fernet base64url (32 bytes); obrigatória em produção |
+| `WEB_SESSION_COOKIE_SECURE` | `0` | `1` em produção ⇒ cookie `__Host-bpm_session` (HTTPS) |
+| `WEB_SESSION_COOKIE_SAMESITE` | `lax` | SameSite do cookie de sessão |
+| `WEB_SESSION_IDLE_TTL_SECONDS` | `2592000` | TTL de inatividade da sessão anônima |
+| `WEB_SESSION_ABSOLUTE_TTL_SECONDS` | `15552000` | TTL absoluto da sessão |
+| `WEB_OAUTH_STATE_TTL_SECONDS` | `600` | validade do `state` do OAuth |
+| `WEB_INTERNAL_JWT_TTL_MINUTES` | `5` | TTL do JWT interno do BFF p/ downstream |
 | `ALLOW_DOWNLOADS` | `0` | habilita execução real de `/download` |
 | `DOWNLOAD_DIR` | `./data/downloads` | destino dos arquivos baixados |
 | `DRYRUN_TTL_MINUTES` | `15` | tempo de validade do `dry_run_id` antes da confirmação |
@@ -120,20 +132,29 @@ docker compose --profile grafana up -d   # http://localhost:3000 (admin/admin pa
 ## 5. Testes
 
 ```bash
-make test-contract    # 16 unitários dos contratos
-make test-e2e         # 10 de fluxo completo (sobe stack em portas efêmeras)
+make test-contract    # 26 unitários dos contratos
+make test-e2e         # 29 de fluxo completo (sobe stack + fake Spotify em portas efêmeras)
 make test             # todos
 ```
 
 Os testes e2e **não usam as portas padrão** (portas efêmeras) e rodam com
-`TIDAL_MOCK=1` e dados temporários — não interferem no seu dev.
+`TIDAL_MOCK=1`, sessão anônima configurada e dados temporários — não interferem
+no seu dev. O fake Spotify (`tests/e2e/fake_spotify.py`) valida PKCE S256 de
+verdade, rotação/revogação de refresh e cenários 429.
 
 ## 6. Solução de problemas
 
 - **UI responde 502/503 no /api**: habilite os proxies capturando logs — cada serviço
   interno precisa estar no ar e com o mesmo `JWT_SECRET`.
-- **`/api/login` retorna 401 apesar da senha certa**: `JWT_SECRET` divergente entre
-  identity e o consumer que valida o token.
+- **`SESSION_INVALID` em todo /api**: cookie de sessão ausente/expirado — recarregue;
+  no dev local certifique-se de `WEB_SESSION_COOKIE_SECURE=0` (com `1` e HTTP o
+  navegador não guarda o cookie `__Host-*`).
+- **`CSRF_INVALID` em POSTs**: o BFF rotaciona o CSRF a cada `GET /api/session`;
+  recarregue a página para pegar o token atual.
+- **`WEB_TOKEN_ENCRYPTION_KEY inválida`**: a variável deve ser base64url de 32 bytes;
+  gere com `python3 -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"`.
+- **Spotify retorna `redirect_uri_mismatch`**: adicione exatamente o
+  `SPOTIFY_REDIRECT_URI` configurado nas Redirect URIs do app no dashboard.
 - **Downloads não executam (`DOWNLOAD_JOB_CONFIRM_REQUIRED`)**: rode dry-run e confirme
   seleções com manifest; confirme `ALLOW_DOWNLOADS=1`. A UI invalida confirmações
   repetidas/expiradas e pede novo dry-run nesses casos.

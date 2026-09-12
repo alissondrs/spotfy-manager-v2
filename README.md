@@ -27,14 +27,21 @@ conflitantes geram `insufficient`/`conflict` (nunca recomendação insegura).
 
 | Serviço     | Porta | Responsabilidade |
 | ----------- | ----: | ---------------- |
-| `web`       | 8000  | BFF + UI estática (proxy para os serviços, JWT no header, token Spotify por usuário) |
-| `identity`  | 8101  | Usuários locais, hash PBKDF2, JWT HS256 |
+| `web`       | 8000  | BFF + UI estática (sessão anônima por cookie, OAuth Spotify PKCE, JWT interno) |
+| `identity`  | 8101  | Usuários locais, hash PBKDF2, JWT HS256 (serviço de identidade legado) |
 | `fileimport`| 8102  | Upload e parsing de markdown/csv/json |
 | `playlist`  | 8103  | Spotify: listar, importar e sincronizar playlists |
 | `catalog`   | 8104  | Catálogo Tidal via hifi-api (busca, candidatos, playback) |
 | `bpm-match` | 8105  | Motor de compatibilidade, confiança e decisões |
 | `library`   | 8106  | Comparação com arquivos locais, dry-run, download + tagging |
 | `report`    | 8107  | Relatórios markdown/csv/html e histórico |
+
+O BFF (`web`) usa **sessão anônima por navegador** (cookie HttpOnly `bpm_session` /
+`__Host-bpm_session` em produção): não há login/registro local. O Spotify é autorizado
+via **Authorization Code + PKCE (S256)** em popup; tokens e `code_verifier` ficam
+cifrados em repouso (Fernet) no BFF, que emite um **JWT interno curto** (`sub=owner_claim`)
+para as chamadas downstream — o navegador nunca envia `Authorization` nem tem acesso
+aos tokens.
 
 Contratos e biblioteca compartilhada vivem em `contracts/` (`spotfy_contracts`), instalado
 como pacote local. Todos os serviços usam `build_app()` (FastAPI) com `/health`, `/metrics`,
@@ -54,16 +61,24 @@ Suba cada serviço em um terminal (portas 8101-8107):
 ```bash
 make run-identity
 make run-catalog              # TIDAL_MOCK=1 por padrão (demo sem Tidal)
-make run-playlist             # requer SPOTIFY_* no .env para listar playlists
+make run-playlist             # requer SPOTIFY_CLIENT_ID + redirect no .env
 make run-bpm-match
 make run-library              # DOWNLOAD_DIR=./downloads
 make run-report
-make run-web                  # http://127.0.0.1:8000
+make run-web                  # http://127.0.0.1:8000 (sessão anônima + Spotify via popup)
 ```
+
+Acesse `http://127.0.0.1:8000` — a UI abre no dashboard sem login e mostra o
+badge **Sessão anônima**. Para o Spotify funcionar: crie o app em
+https://developer.spotify.com/dashboard, copie o `SPOTIFY_CLIENT_ID` para o `.env`
+e adicione `SPOTIFY_REDIRECT_URI` (default `http://127.0.0.1:8000/api/auth/spotify/callback`)
+nas Redirect URIs do app. Em dev, use `WEB_SESSION_COOKIE_SECURE=0`
+(cookie `bpm_session`); em produção, HTTPS + `WEB_SESSION_COOKIE_SECURE=1`
+(cookie `__Host-bpm_session`) e `WEB_TOKEN_ENCRYPTION_KEY` definida.
 
 Bootstrap de dev opcional: com `APP_ENV=development` e `IDENTITY_ENABLE_BOOTSTRAP=1`
 no ambiente do serviço `identity`, `curl localhost:8101/_debug/bootstrap` cria
-`admin`/`admin12345`.
+`admin`/`admin12345` (fluxo legado, apenas para compatibilidade de dados).
 
 ### Container
 
@@ -78,22 +93,29 @@ A UI fica em http://localhost:8000. Métricas: http://localhost:9090 (Prometheus
 ## Dados e segredos
 
 - `JWT_SECRET`: obrigatório e forte (mín. 32 chars, sem valor padrão fraco).
-- `DATA_DIR`: SQLite por serviço (`./data/<serviço>*.sqlite`).
+- `DATA_DIR`: SQLite por serviço (`./data/<serviço>*.sqlite`). O BFF persiste
+  `web_spotify.sqlite` com sessões (só o hash do cookie), transações OAuth e
+  conexões Spotify **cifradas em repouso** (Fernet).
+- `WEB_TOKEN_ENCRYPTION_KEY`: chave Fernet base64url (32 bytes) para os tokens do
+  Spotify e `code_verifier`; obrigatória em produção. Em dev, se vazia, é gerada
+  em `<DATA_DIR>/web_encryption.key`.
 - `DOWNLOAD_DIR`: onde os arquivos baixados são gravados (library).
 - Credenciais nunca entram em arquivos versionados (ver `.env.example`).
 
 ## Testes
 
 ```bash
-make test               # contract + e2e (28 testes)
+make test               # contract + e2e
 make test-contract      # unitários dos contratos
 make test-e2e           # fluxo completo com serviços reais em portas efêmeras
 ```
 
 O e2e sobe todos os serviços localmente (uvicorn em threads, dados temporários,
-`TIDAL_MOCK=1`), registra usuário, importa playlist, analisa, revisa, gera relatório,
-compara com a biblioteca, faz dry-run (e reuso de análise por referência) e baixa
-via job verificando o tagging `mp3`.
+`TIDAL_MOCK=1`), junto com um **fake Spotify** (`tests/e2e/fake_spotify.py`) que
+valida PKCE S256 de verdade, rotação de token e cenários de falha. Os testes cobrem
+sessão anônima (cookie + CSRF rotativo + logout), OAuth por popup, importação por
+`spotify:<id>`, análise por referência, revisão, relatório, comparação com a
+biblioteca, dry-run e download via job verificando o tagging `mp3`.
 
 ## Documentação
 

@@ -58,6 +58,17 @@ ERROR_CATALOG: dict[str, tuple[int, str]] = {
     # Relatórios
     "REPORT_NOT_FOUND": (404, "Relatório não encontrado."),
     "REPORT_FORMAT_UNSUPPORTED": (415, "Formato de relatório não suportado. Use md, csv ou html."),
+
+    # Sessão anônima / CSRF
+    "SESSION_INVALID": (401, "Sessão inválida ou expirada."),
+    "CSRF_INVALID": (403, "Token CSRF inválido ou ausente."),
+    "LOCAL_AUTH_DISABLED": (410, "Cadastro e login local foram desativados. A sessão agora é anônima por navegador."),
+
+    # OAuth Spotify (PKCE)
+    "OAUTH_STATE_INVALID": (400, "Parâmetro de autorização ausente, inválido, expirado ou reutilizado."),
+    "OAUTH_CODE_EXCHANGE_FAILED": (502, "Falha ao trocar o código de autorização com o Spotify."),
+    "SPOTIFY_REFRESH_FAILED": (502, "Falha ao renovar o token do Spotify."),
+    "SPOTIFY_REVOKED": (401, "A autorização do Spotify foi revogada. Conecte novamente."),
 }
 
 

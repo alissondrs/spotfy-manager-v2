@@ -5,20 +5,24 @@ Leia junto com `context.md`, `AGENTS.md` e `docs/features/playlist-bpm-download-
 
 ## 1. Endpoints e payloads
 
-### Auth / sessão
-| Método | Rota (web BFF) | Rota interna | Notas |
-| ------ | -------------- | ------------ | ----- |
-| POST | `/api/auth/login` | identity `/auth/login` | sem mudança |
-| GET | `/api/auth/me` | identity `/auth/me` | sem mudança |
-| GET | `/api/auth/spotify/status` | — | **agora autenticado**: lê token por usuário |
-| POST | `/api/auth/spotify/token` | — | **agora autenticado**: salva token por usuário (SQLite no BFF) |
-| POST | `/api/auth/spotify/claim` | — | novo: adota token pendente do OAuth para o usuário atual |
-| GET | `/api/auth/spotify/callback` | — | guarda token como `pending` em SQLite (não mais memória) |
+### Auth / sessão (BFF — anônima por navegador)
+| Método | Rota (web BFF) | Notas |
+| ------ | -------------- | ----- |
+| GET | `/api/session` | cria/recupera a sessão anônima; rotaciona o CSRF; define o cookie HttpOnly |
+| GET | `/api/me`, `/api/auth/me` | identidade da sessão (anonimizada) |
+| POST | `/api/auth/logout` | revoga a sessão e limpa o cookie |
+| POST | `/api/auth/login`, `/api/auth/register` | **410 `LOCAL_AUTH_DISABLED`** (desativado) |
+| GET | `/api/auth/spotify` | gera `state` + `code_verifier` (PKCE S256) e devolve `{url, redirect_uri}` |
+| GET | `/api/auth/spotify/callback` | valida state da sessão (owner/expiração/uso único) e troca o code |
+| GET | `/api/auth/spotify/status` | `{"connected": bool, "expires_in": int|0}` (nunca expõe tokens) |
+| POST | `/api/auth/spotify/disconnect` | revoga a conexão Spotify da sessão |
 
 **Contrato:**
-- `POST /api/auth/spotify/token` request: `{"token": "..."}` → `{"ok": true, "expires_in": 3600}`.
-- `POST /api/auth/spotify/claim` request: `{}` → `{"ok": true}` ou `NOT_FOUND` se não há pendência.
-- `GET /api/auth/spotify/status` → `{"connected": bool, "expires_in": int|null}`.
+- `GET /api/session` → `{anonymous: true, created: bool, session: {owner, created_at, expires_in, idle_ttl_seconds, absolute_ttl_seconds, csrf_token}}` + cookie `bpm_session` (dev) ou `__Host-bpm_session` (produção/HTTPS).
+- Operações mutáveis exigem header `X-CSRF-Token` (rotacionado a cada `/api/session`).
+- `GET /api/auth/spotify` → `{"url": "<accounts.spotify.com/authorize?...PKCE...>", "redirect_uri": "..."}`.
+- O navegador **nunca** envia `Authorization`; o BFF injeta JWT interno curto
+  (`sub=owner_claim`, `WEB_INTERNAL_JWT_TTL_MINUTES`) nas chamadas downstream.
 
 ### Playlists / fontes
 | Método | Rota | Notas |
@@ -148,23 +152,38 @@ CREATE TABLE IF NOT EXISTS job_items (
 | `DRYRUN_NOT_FOUND` | 404 | Dry-run não encontrado. Execute novo dry-run. |
 | `DRYRUN_EXPIRED` | 409 | Dry-run expirado. Execute novamente o dry-run antes de baixar. |
 | `SPOTIFY_NOT_CONNECTED` | 401 | Conecte o Spotify para listar as suas playlists. |
-| `SPOTIFY_TOKEN_EXPIRED` | 401 | Token do Spotify expirado. Conecte novamente. |
+| `SPOTIFY_REFRESH_FAILED` | 502 | Falha ao renovar a conexão com o Spotify. |
+| `SPOTIFY_REVOKED` | 401 | Conexão com o Spotify revogada. Conecte novamente. |
+| `SESSION_INVALID` | 401 | Sessão inválida ou expirada. |
+| `CSRF_INVALID` | 403 | Token CSRF ausente ou inválido. Recarregue a página. |
+| `LOCAL_AUTH_DISABLED` | 410 | Login/registro local desativados. Sessão anônima por navegador. |
+| `OAUTH_STATE_INVALID` | 400 | Estado de autorização inválido. |
+| `OAUTH_CODE_EXCHANGE_FAILED` | 502 | Falha ao trocar o código de autorização. |
 | `ANALYSIS_REUSE_FAILED` | 400 | Não foi possível reutilizar a análise anterior. |
 
 ## 4. BFF / proxy
 
 - Extrair cliente interno compartilhado (`_internal_client()` com timeout de leitura).
-- Injeta `X-Request-Id` (uuid) em todas as chamadas internas; retransmite `Authorization`.
+- Injeta `X-Request-Id` (uuid) em todas as chamadas internas; **não repassa
+  `Authorization` vindo do navegador** — emite JWT interno com `sub=owner_claim`.
+- Injeta `X-Spotify-Token` (token gerenciado/refreshed pelo BFF) nas chamadas ao
+  playlist service; tokens nunca vêm do cliente e nunca vazam em respostas.
 - Propagar `status`, `content-type` e `content-disposition` em respostas upstream
   (incluindo download de relatório).
 - Futuro: correlation ID em logs (mínimo nesta iteração: header presente).
 
 ## 5. Ownership e autorização
 
-- Já vigente: todos os endpoints de domínio com `_require_user`.
-- Novo: token Spotify do BFF é por usuário (chave `sub` do JWT), nunca global.
+- Já vigente: todos os endpoints de domínio com `_require_user` — agora recebem o
+  JWT interno do BFF com `sub = owner_claim` (ex. `anon_<uuid>`).
+- Sessões: só o **hash** do cookie é persistido; `owner` é a chave de isolamento;
+  TTL idle/absoluto (`WEB_SESSION_*`) e revogação no logout.
+- OAuth: `state` + `code_verifier` atrelados ao `owner` da sessão e cifrados (Fernet);
+  state é uso-único e expira (`WEB_OAUTH_STATE_TTL_SECONDS`).
+- `spotify_connections`: por `owner`, cifrado em repouso (`WEB_TOKEN_ENCRYPTION_KEY`);
+  refresh com trava por owner e revogação local em `invalid_grant`.
 - `dryruns`, `job_items`: filtrados por `owner`.
-- `analyses`: coluna `references` nova — filtragem por `owner` já existente.
+- `analyses`: coluna `reference` nova — filtragem por `owner` já existente.
 
 ## 6. Migração
 
@@ -174,17 +193,25 @@ CREATE TABLE IF NOT EXISTS job_items (
 
 ## 7. Testes de integração / regressão (a ampliar)
 
-`tests/e2e/test_flow.py`:
-- `test_web_download_confirmation_uses_dryrun_id` — dryrun → confirma com `dry_run_id`,
-  polla `GET /jobs/{id}` até `completed`, item `downloaded`.
-- `test_download_expired_dryrun_rejected` — dryrun com expiração zerada rejeitada (409).
-- `test_analyze_reuse_same_reference` — duas análises com mesma `reference` → mesmo
-  `analysis_id`; `force=true` cria nova.
-- `test_analyze_resolves_reference_from_file` — `reference="file:{import_id}"` com
-  `tracks=[]` resolve e analisa.
-- `test_catalog_unavailable_is_not_insufficient` — com `CATALOG_URL` apontando para porta
-  morta, análise marca `catalog_unavailable=true` e itens têm `dependency_error`.
-- `test_spotify_token_per_user` — token salvo para A não aparece para B (via BFF).
+`tests/e2e/test_flow.py` (migrados e mantidos):
+- `test_web_download_confirmation_and_import_lookup` — via sessão anônima: import de
+  arquivo, dryrun → confirma com `dry_run_id`, polla `/api/library/jobs/{id}`.
+- `test_web_bff_and_ui` — via sessão anônima: UI estática, `/api/me` anônimo,
+  análise por `reference="file:<import_id>"`.
+- `test_analysis_reuse_by_reference`, `test_catalog_unavailable_is_not_insufficient`,
+  `test_download_requires_bound_dryrun` — mantidos (downstream via JWT de identidade).
+
+`tests/e2e/test_web_session.py` (novo — sessão anônima + OAuth/Spotify + fake Spotify):
+- `test_anonymous_session_and_cookie` — cookie HttpOnly, owner estável, CSRF rotacionado,
+  `Authorization` vindo do navegador é ignorado.
+- `test_csrf_required_and_rotated` — mutações sem CSRF/CSRF antigo → 403; logout revoga.
+- `test_login_and_register_are_disabled` — 410 `LOCAL_AUTH_DISABLED`.
+- `test_spotify_pkce_connect_import_and_analyze` — popup (authorize→callback), status
+  conectado, `/api/playlists`, import `spotify:pl_main`, análise por referência.
+- `test_oauth_state_is_bound_to_the_session` / `test_oauth_state_is_single_use`.
+- `test_spotify_token_rotation_and_refresh` / `test_spotify_refresh_failure_revokes_connection`.
+- `test_spotify_rate_limit_surfaces_as_error` — 429 → `SPOTIFY_API_ERROR`.
+- `test_no_tokens_leak_in_api_responses` — nenhum token em respostas do BFF.
 
 `tests/contract/test_contracts.py`:
 - `parse_reference` / validação de `spotify:*` e `file:*`.

@@ -2,29 +2,30 @@
 
 ## 1. Resumo executivo
 
-O `spotfy-manager-v2` já possui oito microsserviços FastAPI, UI estática, autenticação
-local, integração Spotify, catálogo Tidal/HiFi, BPM Match, biblioteca/downloads e
-relatórios. A dor principal é um fluxo web fragmentado: login pouco confiável, playlists
-não disponíveis de forma consistente após autenticar e dificuldade para concluir o fluxo
-playlist → BPM Match → download.
+O `spotfy-manager-v2` já possui oito microsserviços FastAPI, UI estática, integração
+Spotify, catálogo Tidal/HiFi, BPM Match, biblioteca/downloads e relatórios. A dor
+principal era um fluxo web fragmentado: login local frágil (JWT no `localStorage`),
+playlists com token do Spotify em memória no BFF e fluxo playlist → BPM Match →
+download difícil de concluir.
 
-Esta feature transforma o navegador em um fluxo único de trabalho:
+Esta feature transforma o navegador em um fluxo único de trabalho, sem login:
 
-> Preparar um set musical inteiro em um único fluxo seguro: autenticar, escolher uma
-> playlist, validar o BPM Match e baixar somente as faixas confirmadas.
+> Preparar um set musical inteiro em um único fluxo seguro: entrar numa sessão anônima,
+> conectar o Spotify (PKCE), escolher uma playlist, validar o BPM Match e baixar somente
+> as faixas confirmadas.
 
 ### Problema
 
-- **Login**: a sessão depende de token JWT guardado no `localStorage` sem estado útil de
-  pós-login; expiração não comunica uma mensagem compreensível.
-- **Playlists**: o token do Spotify vive em memória no BFF (`_spotify_token`), perdido em
-  restart; a UI exige cliques extras ("Carregar playlists") e usa `localStorage` como
-  fallback, dificultando recuperação e consistência.
-- **BPM Match**: `/analyze` recebe as faixas copiadas no corpo, sem referência estável à
-  playlist originária; cada clique gera análise duplicada da mesma playlist; falhas do
-  catálogo se confundem com ausência real de dados.
-- **Download**: o botão de confirmação envia seleções reenviadas pelo cliente, sem vínculo
-  com o dry-run; download não mostra progresso por item; a UI não conclui o fluxo real.
+- **Sessão**: o login dependia de JWT no `localStorage`, com expiração sem mensagem
+  compreensível; não há sessão de navegador persistente e revogável.
+- **Playlists**: o token do Spotify vivia em memória no BFF (`_spotify_token`), perdido em
+  restart; a UI exigia cliques extras ("Carregar playlists") e usava `localStorage` como
+  fallback.
+- **BPM Match**: `/analyze` recebia as faixas copiadas no corpo, sem referência estável à
+  playlist originária; cada clique gerava análise duplicada; falhas do catálogo se
+  confundiam com ausência real de dados.
+- **Download**: a confirmação reenviava seleções do cliente, sem vínculo com o dry-run;
+  sem progresso por item.
 
 ### Proposta de valor
 
@@ -41,11 +42,11 @@ faixas para a biblioteca local.
 
 | # | Como | Eu quero | Para |
 |---|------|----------|------|
-| US-01 | DJ | entrar com usuário/senha locais | proteger acesso aos meus dados e downloads |
-| US-02 | DJ | chegar após o login a uma tela útil | saber o que posso fazer e ver minhas playlists/imports direto |
-| US-03 | DJ | ver uma mensagem clara quando a sessão expira | não ficar preso em erro silencioso |
-| US-04 | DJ | conectar o Spotify e listar minhas playlists | escolher a fonte do set |
-| US-05 | DJ | que minhas playlists/imports permaneçam disponíveis após refresh/relogin | continuar o trabalho sem recomeçar |
+| US-01 | DJ | entrar direto numa sessão anônima (sem login/registro) | proteger acesso aos meus dados e downloads |
+| US-02 | DJ | chegar a uma tela útil | saber o que posso fazer e ver minhas playlists/imports direto |
+| US-03 | DJ | ver uma mensagem clara quando a sessão expira/é recriada | não ficar preso em erro silencioso |
+| US-04 | DJ | conectar o Spotify (popup + PKCE) e listar minhas playlists | escolher a fonte do set |
+| US-05 | DJ | que minhas playlists/imports permaneçam disponíveis após refresh/nova sessão | continuar o trabalho com o que foi persistido |
 | US-06 | DJ | selecionar uma playlist e mandar para o BPM Match sem copiar faixas | reduzir erro e fricção |
 | US-07 | DJ | reutilizar a análise já existente da mesma playlist | não duplicar trabalho |
 | US-08 | DJ | ver BPM, confiança, divergências e motivo de cada decisão | confiar na recomendação |
@@ -57,10 +58,9 @@ faixas para a biblioteca local.
 ## 3. Critérios de aceite (rastreáveis)
 
 ### Autenticação e sessão
-- CA-01: Usuário autenticado chega a um estado útil sem recarregar manualmente (dashboard
-  com tickets/playlists).
-- CA-02: Sessão expirada redireciona para login com mensagem compreensível, sem perder o
-  contexto do tab.
+- CA-01: Navegador chega a um estado útil sem login (dashboard direto, badge de sessão).
+- CA-02: Sessão invalidada (expirada/revogada) → API retorna `SESSION_INVALID`; a UI
+  recria a sessão anônima e avisa, sem perder o contexto do tab.
 - CA-03: Token Spotify conectado → playlists carregam automaticamente na aba Importar.
 
 ### Playlists e fontes
@@ -92,15 +92,20 @@ faixas para a biblioteca local.
 ### Erros e segurança
 - CA-16: Erros Spotify/Tidal aparecem como erro acionável (ex.: "Conecte o Spotify"),
   nunca como lista vazia enganosa.
-- CA-17: Nenhum endpoint de domínio acessível sem JWT; ownership respeitado (401/403).
+- CA-17: Nenhum endpoint de domínio acessível sem sessão válida (cookie + CSRF em
+  mutáveis); ownership respeitado (401/403); tokens nunca vazam em respostas.
 - CA-18: Bootstrap `/_debug/bootstrap` continua restrito a `APP_ENV=development` +
-  flag explícita.
+  flag explícita; `/api/auth/login`/`register` retornam 410 (desativados).
 
 ## 4. Escopo MVP e backlog
 
 ### Dentro do MVP
-- Autenticação local confiável com recuperação de sessão explícita e mensagens por erro.
-- Listagem/carregamento/seleção de playlists Spotify pós-login, com estado recuperável.
+- Sessão anônima por navegador (cookie HttpOnly) com CSRF rotativo e logout
+  ("Nova sessão") e mensagens por erro.
+- OAuth Spotify Authorization Code + PKCE (S256) com refresh automático, tokens e
+  `code_verifier` cifrados em repouso (Fernet).
+- Listagem/carregamento/seleção de playlists Spotify pós-conexão, com estado recuperável
+  (`/api/synced`, `/api/imports`).
 - Referência estável de playlist no BPM Match + reuso de análise (mesma playlist/alvo).
 - Revisão/aprovação/rejeição com seleção explícita de recommended para biblioteca.
 - Compare → dry-run (`dry_run_id`) → confirmação → download via job com progresso
@@ -108,9 +113,9 @@ faixas para a biblioteca local.
 - Relatório mínimo por análise/exportação já existente preservado.
 
 ### Fora do MVP (backlog)
-- OAuth completo do Spotify com refresh persistente (hoje token de sessão via header).
-- Multiusuário avançado, papéis e permissões administrativas.
-- Filas assíncernas/worker dedicado para lotes grandes (job em thread in-process).
+- Multiusuário com login separado (a sessão anônima não é por conta; um token fixo de
+  usuário se deixarmos o `identity` como conta opcional).
+- Filas assíncronas/worker dedicado para lotes grandes (job em thread in-process).
 - Aplicativo mobile (ver seção Mobile Readiness).
 - Relatórios e observabilidade avançados.
 
@@ -118,9 +123,9 @@ faixas para a biblioteca local.
 
 | Serviço | Mudança |
 | ------- | ------- |
-| `web` (BFF) | Persistir token Spotify por usuário (SQLite) em vez de memória global; claim do token após OAuth; proxy com `X-Request-Id` e passthrough de headers; estados de sessão na UI |
-| `identity` | Sem mudança de contrato; reutilizado (login/me) |
-| `playlist` | Expor importações com referência estável `spotify:<id>`; garantir recuperação por usuário |
+| `web` (BFF) | Sessão anônima (cookie + CSRF); OAuth Spotify PKCE com refresh; tokens cifrados em repouso; JWT interno com `sub=owner_claim`; proxy sem `Authorization` do cliente; estados de sessão na UI |
+| `identity` | Mantido para compatibilidade de dados legados (login/registro 410 no BFF) |
+| `playlist` | Importações com referência estável `spotify:<id>`; URLs do Spotify configuráveis (`SPOTIFY_API_URL`) para fake/proxy; busca por nome; erro 429 mapeado |
 | `fileimport` | Expor importações com referência estável `file:<import_id>` (já recuperável) |
 | `catalog` | Sem mudança de contrato (falhas já possuem códigos `TIDAL_*`/`CATALOG_UNREACHABLE`) |
 | `bpm-match` | `/analyze` aceita `reference` e resolve faixas; reuso de análise; `dependency_error` por item + flag de catálogo indisponível |
@@ -129,9 +134,11 @@ faixas para a biblioteca local.
 
 ## 6. Dependências
 
-- **Auth**: JWT HS256 compartilhado (`JWT_SECRET`, min. 32 chars); PBKDF2 nas senhas.
-- **Spotify**: `SPOTIFY_CLIENT_ID/SECRET` (OAuth) ou `SPOTIFY_ACCESS_TOKEN` direto;
-  token propagado via `X-Spotify-Token` do BFF para o `playlist`.
+- **Sessão**: cookie HttpOnly (`bpm_session` dev / `__Host-bpm_session` prod), CSRF
+  rotativo, JWT interno curto (`JWT_SECRET`, min. 32 chars).
+- **Spotify**: `SPOTIFY_CLIENT_ID` + `SPOTIFY_REDIRECT_URI` (Authorization Code + PKCE,
+  sem client_secret), URLs configuráveis (`SPOTIFY_*_URL`) e
+  `WEB_TOKEN_ENCRYPTION_KEY` (Fernet) para persistência cifrada.
 - **Tidal/HiFi**: `HIFI_API_URL` + token Tidal; `TIDAL_MOCK=1` para demo/testes.
 - **Downloads**: `ALLOW_DOWNLOADS=1` para execução real; `DOWNLOAD_DIR` para persistência.
 - **Persistência**: SQLite por serviço (`DATA_DIR`).
@@ -140,7 +147,8 @@ faixas para a biblioteca local.
 
 | Risco | Controle |
 | ----- | -------- |
-| Token Spotify perdido em restart | Persistir por usuário no BFF; `localStorage` deixa de ser fonte primária |
+| Token Spotify perdido em restart | Persistir cifrado por sessão no BFF (`WEB_TOKEN_ENCRYPTION_KEY`); refresh automático |
+| Sessão sem estado/revogação | Cookie HttpOnly + CSRF rotativo + logout ("Nova sessão"); TTL idle/absoluto |
 | Análise duplicada da mesma playlist | Chave de reuso `owner+reference+target_bpm`; `force=true` para reanalisar |
 | Falha do catálogo parecer ausência de dados | `dependency_error` por item + flag de catálogo indisponível na análise |
 | Download não confirmado/duplicado | `dry_run_id` persistido, ownership + expiração (15 min) no servidor |
@@ -156,7 +164,8 @@ tiles). Requisitos para adoção futura em telas pequenas:
 - Estados de loading/vazio/erro sem dependência de hover (já respeitados).
 - Fluxo de confirmação com um dedo (botões grandes, sem drag-and-drop).
 - APIs stateless e reutilizáveis por clientes futuros (nenhuma regra crítica em JS/localStorage).
-- Tokens em `localStorage` serão substituídos por cookie/secao segura se houver cliente mobile.
+- Tokens em `localStorage` serão substituídos por cookie/sessão segura se houver cliente mobile
+  (já é o modelo atual: cookie + PKCE, sem JWT no navegador).
 
 ## 9. Definição de pronto
 

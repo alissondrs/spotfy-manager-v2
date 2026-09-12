@@ -39,16 +39,35 @@ ou confiar em dados insuficientes). O v2 mantém os casos de uso do legado, mas:
    demo/testes sem Tidal; em produção, remover e apontar `HIFI_API_URL` real.
 6. **Portas default**: web 8000, identity 8101, fileimport 8102, playlist 8103,
    catalog 8104, bpm-match 8105, library 8106, report 8107.
-7. **Token Spotify por usuário** vive no BFF (`web_spotify.sqlite`): o callback OAuth
-   guarda o token como pendente e `POST /api/auth/spotify/claim` o vincula ao usuário
-   autenticado (nada em memória global).
+7. **Sessão anônima por navegador (sem login/registro)**: o BFF cria um cookie HttpOnly
+   (`bpm_session` em dev/HTTP; `__Host-bpm_session` com Secure em produção) e só
+   persiste o **hash** do token. Cada `GET /api/session` rotaciona o **CSRF token**
+   (guardado hashado, enviado como `X-CSRF-Token` em operações mutáveis). `logout`
+   revoga a sessão. `/api/auth/login` e `/api/auth/register` retornam 410.
+8. **OAuth Spotify via Authorization Code + PKCE (S256)**: o BFF gera `state` +
+   `code_verifier` (guardados cifrados em `web_spotify.sqlite`, tabelas
+   `sessions`/`oauth_transactions`/`spotify_connections`, com `schema_meta` v1);
+   tokens e `code_verifier` são cifrados em repouso com Fernet
+   (`WEB_TOKEN_ENCRYPTION_KEY`, 32 bytes base64url). O callback valida state da
+   própria sessão (dono/expiração/uso único) e troca o código **sem client_secret**.
+9. **JWT interno curto do BFF**: o navegador nunca envia `Authorization`; o BFF emite
+   um token interno (`web_internal_jwt_ttl_minutes`) com `sub=owner_claim` (ex.
+   `anon_<uuid>`) para cada chamada downstream, mantendo compatibilidade com
+   `current_username_from_header()`. Tokens Spotify nunca saem do BFF.
+   Refreshes têm trava por owner (`threading.Lock`); em `invalid_grant` a conexão é
+   revogada localmente.
 
 ## Estado implementado
 
 - Fases 1-4 (PRD → protótipo → handoffs) concluídas; Fase 5 (implementação)
   concluída e validada por testes.
-- Serviços: os 8 acima, todos com `/health` e `/metrics`.
-- Testes: `tests/contract` (16) e `tests/e2e` (12, fluxo completo).
+- Sessão anônima + OAuth Spotify PKCE implementados no BFF e na UI (popup com
+  fallback de link, badge "Sessão anônima", botão "Nova sessão").
+- Serviços: os 8 acima, todos com `/health` e `/metrics`. Referências de fonte
+  estáveis: `spotify:<playlist_id>` e `file:<import_id>`; BPM Match resolve com
+  `reference` + `tracks: []`.
+- Testes: `tests/contract` (26) e `tests/e2e` (29), incluindo `fake_spotify.py`
+  (faz validação real de PKCE S256, rotação/revogação de refresh e cenários 429).
 - Infra: `Dockerfile` único (ARG SERVICE), `docker-compose.yml` (8 serviços +
   Prometheus + Grafana opcional), `Makefile`, `observability/prometheus.yml`.
 
@@ -56,7 +75,8 @@ ou confiar em dados insuficientes). O v2 mantém os casos de uso do legado, mas:
 
 - Manifesto real `application/vnd.tidal.bts` exige hifi-api externo com token Tidal.
 - Análise assíncrona para lots grandes (MVP é síncrono).
-- Auth intra-rede opcional para endpoints internos.
+- Serviço `identity` mantido apenas para compatibilidade de dados legados
+  (login/registro desativados no BFF).
 
 ## Onde está o quê
 

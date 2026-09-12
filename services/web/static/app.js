@@ -1,17 +1,21 @@
-/* BPM Match UI — spotfy-manager-v2 */
+/* BPM Match UI — spotfy-manager-v2
+   Sessão anônima por navegador (cookie HttpOnly) + OAuth Spotify (Authorization Code + PKCE).
+   Sem login/registro local e sem JWT no navegador/localStorage. */
 "use strict";
 
-const TOKEN_KEY = "bpm_token";
-const USER_KEY = "bpm_user";
+const SRC_KEY = "bpm_sources"; // fallback legado de fontes, não substitui o backend
 const state = {
-  token: localStorage.getItem(TOKEN_KEY) || "",
-  user: localStorage.getItem(USER_KEY) || "",
+  session: null,
   analysis: null,
   sourceOptions: [],
   selectedOrdinals: new Set(),
   lastDryRun: null,
   activeJob: null,
   jobTimer: null,
+  spotifyPopup: null,
+  spotifyPoll: null,
+  spotifyPopupWatch: null,
+  spotifyFinished: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -19,16 +23,24 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 async function api(path, opts = {}) {
+  const method = (opts.method || "GET").toUpperCase();
   const headers = { ...(opts.headers || {}) };
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-  const resp = await fetch(path, { ...opts, headers });
-  if (resp.status === 401 && state.token) { showLogin(); throw new Error("Sessão expirada."); }
+  if (opts.body && !(opts.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && state.session) headers["X-CSRF-Token"] = state.session.csrf_token;
+  const resp = await fetch(path, { ...opts, method, headers, credentials: "same-origin" });
   const ct = resp.headers.get("content-type") || "";
-  return { status: resp.status, body: ct.includes("application/json") ? await resp.json() : await resp.text(), resp };
+  const body = ct.includes("application/json") ? await resp.json() : await resp.text();
+  if (resp.status === 401 && body?.error === "SESSION_INVALID") {
+    await initSession(true);
+    throw new Error("Sessão expirada. Uma nova sessão anônima foi criada — recarregue a página se algo não funcionar.");
+  }
+  return { status: resp.status, body, resp };
 }
 const apiJson = (p, opts) => api(p, opts).then((r) => r.body);
-function guard(r) { if (r.status >= 400) throw new Error(r.body?.detail || r.body?.error || "Erro desconhecido."); return r.body; }
+function guard(r) {
+  if (r.status >= 400) throw new Error(r.body?.detail || r.body?.error || "Erro desconhecido.");
+  return r.body;
+}
 
 /* ---------------- navegação ---------------- */
 const TAB = { dashboard: renderDashboard, import: renderImport, analyze: () => renderAnalyze(), library: renderLibrary, reports: renderReports };
@@ -38,34 +50,34 @@ function show(tab) {
   $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   TAB[tab]?.();
 }
-function showLogin() { state.token = ""; state.user = ""; localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); $("#nav").classList.add("hidden"); $("#view-login").classList.remove("hidden"); $("#view-register").classList.add("hidden"); }
-function showApp() { $("#nav").classList.remove("hidden"); $("#user-label").textContent = state.user; document.querySelectorAll(".login-card").forEach((c) => c.classList.add("hidden")); show("dashboard"); }
+function showApp() {
+  $("#nav").classList.remove("hidden");
+  if (state.session) {
+    const short = state.session.owner.length > 18 ? state.session.owner.slice(0, 12) + "…" : state.session.owner;
+    $("#session-badge").textContent = `Sessão anônima · ${short}`;
+  }
+  show("dashboard");
+}
 
-$("#go-register").onclick = (e) => { e.preventDefault(); $("#view-login").classList.add("hidden"); $("#view-register").classList.remove("hidden"); };
-$("#go-login").onclick = (e) => { e.preventDefault(); $("#view-register").classList.add("hidden"); $("#view-login").classList.remove("hidden"); };
-$("#logout").onclick = showLogin;
 $("#nav").addEventListener("click", (e) => { const t = e.target.closest("button[data-tab]"); if (t) show(t.dataset.tab); });
+$("#new-session").onclick = async () => {
+  if (!confirm("Iniciar uma nova sessão anônima? Playlists importadas, análises e relatórios desta sessão não serão mais acessíveis.")) return;
+  try { await apiJson("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }); } catch {}
+  location.reload();
+};
 
-/* ---------------- auth ---------------- */
-$("#login-form").onsubmit = async (e) => {
-  e.preventDefault();
-  try {
-    const r = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: $("#login-user").value, password: $("#login-pass").value }) });
-    if (r.status === 401) throw new Error("Usuário ou senha inválidos.");
-    const data = guard(r);
-    state.token = data.token; state.user = data.username;
-    localStorage.setItem(TOKEN_KEY, data.token); localStorage.setItem(USER_KEY, data.username);
-    $("#login-error").classList.add("hidden"); showApp();
-  } catch (err) { $("#login-error").textContent = err.message; $("#login-error").classList.remove("hidden"); }
-};
-$("#register-form").onsubmit = async (e) => {
-  e.preventDefault();
-  try {
-    const r = await api("/api/auth/register", { method: "POST", body: JSON.stringify({ username: $("#reg-user").value, password: $("#reg-pass").value }) });
-    if (r.status >= 400) throw new Error(r.body?.detail || "Erro ao registrar.");
-    alert("Conta criada. Faça login."); $("#view-register").classList.add("hidden"); $("#view-login").classList.remove("hidden");
-  } catch (err) { $("#register-error").textContent = err.message; $("#register-error").classList.remove("hidden"); }
-};
+function showBanner(message) {
+  const el = $("#banner");
+  el.textContent = message || "";
+  el.classList.toggle("hidden", !message);
+}
+
+async function initSession(silent) {
+  const data = await apiJson("/api/session");
+  state.session = data.session;
+  if (data.created && !silent) showBanner("Nova sessão anônima criada. Dados de uma sessão anterior não são mais acessíveis.");
+  showApp();
+}
 
 /* ---------------- dashboard ---------------- */
 async function renderDashboard() {
@@ -87,134 +99,198 @@ async function renderImport() {
   const sel = $("#playlist-select");
   const btn = $("#import-playlist");
   $("#file-result").textContent = "";
-  await loadSources();
-  if (sel.options.length > 0) { sel.classList.remove("hidden"); btn.classList.remove("hidden"); }
-  // Verifica status do Spotify
   try {
     const st = await apiJson("/api/auth/spotify/status");
     if (st.connected) {
-      $("#spotify-status").textContent = "✓ Spotify conectado";
+      $("#spotify-status").textContent = "Spotify conectado";
       $("#spotify-status").className = "badge-ok";
       $("#connect-spotify").textContent = "Reconectar Spotify";
+      for (const p of st.player_name ? [] : []) {}
       if (sel.options.length === 0) await loadSpotifyPlaylists(btn);
     } else {
       $("#spotify-status").textContent = "Spotify não conectado";
+      $("#spotify-status").className = "muted";
       $("#connect-spotify").textContent = "Conectar Spotify";
     }
-  } catch {}
-}
-async function loadSources() {
-  const sel = $("#playlist-select");
-  if (sel.options.length > 0) return;
-  try {
-    const data = await apiJson("/api/synced");
-    const synced = data.synced || [];
-    for (const p of synced) sel.appendChild(new Option(`${p.name} (${p.track_count} faixas)`, p.id));
-  } catch { /* spotify pode não estar configurado */ }
+  } catch (err) {
+    $("#spotify-status").textContent = "Status indisponível: " + err.message;
+    $("#spotify-status").className = "error";
+  }
 }
 
-// Botão "Conectar Spotify"
+function setSpotifyStatus(message, tone = "muted") {
+  $("#spotify-status").textContent = message;
+  $("#spotify-status").className = tone;
+}
+function resetSpotifyFallback() {
+  const box = $("#spotify-fallback");
+  box.classList.add("hidden");
+  box.innerHTML = "";
+  stopSpotifyPoll();
+}
+
 $("#connect-spotify").onclick = async (e) => {
   const btn = e.target;
   btn.disabled = true;
+  state.spotifyFinished = false;
+  resetSpotifyFallback();
+  setSpotifyStatus("Preparando autorização...", "muted");
   try {
-    const data = await apiJson("/api/auth/spotify");
+    const data = await apiJson("/api/auth/spotify"); // gera state + code_verifier (BFF)
     const w = 500, h = 600;
     const left = (screen.width - w) / 2, top = (screen.height - h) / 2;
-    window.open(data.url, "spotify-auth", `width=${w},height=${h},left=${left},top=${top}`);
-    $("#spotify-token-section").classList.remove("hidden");
-    $("#spotify-status").textContent = "Autorize no popup e aguarde...";
-    const poll = setInterval(async () => {
-      try {
-        await api("/api/auth/spotify/claim", { method: "POST", body: JSON.stringify({}) });
-        const st = await apiJson("/api/auth/spotify/status");
-        if (st.connected) {
-          clearInterval(poll);
-          $("#spotify-status").textContent = "✓ Spotify conectado!";
-          $("#spotify-status").className = "badge-ok";
-          $("#connect-spotify").textContent = "Reconectar Spotify";
-          $("#spotify-token-section").classList.add("hidden");
-          btn.disabled = false;
-        }
-      } catch {}
-    }, 2000);
-    setTimeout(() => clearInterval(poll), 300000);
+    const popup = window.open("about:blank", "spotify-auth", `width=${w},height=${h},left=${left},top=${top}`);
+    if (!popup || popup.closed) {
+      throw new PopupBlockedError(data.url);
+    }
+    state.spotifyPopup = popup;
+    popup.location.href = data.url;
+    setSpotifyStatus("Autorize no popup do Spotify...", "muted");
+    startSpotifyStatusPoll();
+    watchPopupClosed(popup, btn);
   } catch (err) {
-    $("#spotify-status").textContent = err.message;
-    $("#spotify-status").className = "error";
-    btn.disabled = false;
+    if (err instanceof PopupBlockedError) {
+      setSpotifyStatus("Popup bloqueado. Abra a autorização na própria aba:", "error");
+      showSpotifyFallback(err.url);
+      startSpotifyStatusPoll();
+      btn.disabled = false;
+    } else {
+      setSpotifyStatus(err.message, "error");
+      btn.disabled = false;
+    }
   }
 };
 
-// Salvar token manual
-$("#save-spotify-token").onclick = async () => {
-  const token = $("#spotify-token-input").value.trim();
-  if (!token) return;
-  try {
-    const r = await api("/api/auth/spotify/token", { method: "POST", body: JSON.stringify({ token }) });
-    if (r.body?.ok) {
-      $("#spotify-status").textContent = "✓ Token salvo!";
-      $("#spotify-status").className = "badge-ok";
-      $("#spotify-token-section").classList.add("hidden");
-      $("#connect-spotify").textContent = "Reconectar Spotify";
-    } else {
-      $("#spotify-error").textContent = r.body?.detail || "Erro ao salvar token";
+class PopupBlockedError extends Error {
+  constructor(url) { super("Popup bloqueado."); this.url = url; }
+}
+function showSpotifyFallback(url) {
+  const box = $("#spotify-fallback");
+  box.innerHTML = "";
+  const a = document.createElement("a");
+  a.href = url; a.target = "_blank"; a.rel = "noopener"; a.className = "ghost";
+  a.textContent = "Abrir autorização do Spotify";
+  box.appendChild(a);
+  box.appendChild((() => { const s = document.createElement("span"); s.innerHTML = " — conclua e a aba se fecha sozinha."; return s; })());
+  box.classList.remove("hidden");
+}
+
+function startSpotifyStatusPoll() {
+  if (state.spotifyPoll) return;
+  let ticks = 0;
+  state.spotifyPoll = setInterval(async () => {
+    ticks += 1;
+    try {
+      const st = await apiJson("/api/auth/spotify/status");
+      if (st.connected) { finishSpotifyConnect(); return; }
+      if (ticks > 150) { setSpotifyStatus("Autorização pendente há muito tempo. Tente novamente.", "error"); stopSpotifyPoll(); }
+    } catch (err) {
+      setSpotifyStatus("Falha ao consultar status: " + err.message, "error");
+      stopSpotifyPoll();
+      const btn = $("#connect-spotify");
+      btn.disabled = false;
     }
-  } catch (err) {
-    $("#spotify-error").textContent = err.message;
+  }, 2000);
+}
+function stopSpotifyPoll() {
+  if (state.spotifyPoll) { clearInterval(state.spotifyPoll); state.spotifyPoll = null; }
+}
+function watchPopupClosed(popup, btn) {
+  if (state.spotifyPopupWatch) clearInterval(state.spotifyPopupWatch);
+  state.spotifyPopupWatch = setInterval(() => {
+    if (!popup || popup.closed !== false) {
+      clearInterval(state.spotifyPopupWatch);
+      state.spotifyPopupWatch = null;
+      state.spotifyPopup = null;
+      if (!state.spotifyFinished) {
+        setSpotifyStatus("Popup fechado sem concluir. Use o botão para tentar de novo.", "error");
+        btn.disabled = false;
+      }
+    }
+  }, 1000);
+}
+function finishSpotifyConnect() {
+  if (state.spotifyFinished) return;
+  state.spotifyFinished = true;
+  stopSpotifyPoll();
+  if (state.spotifyPopupWatch) { clearInterval(state.spotifyPopupWatch); state.spotifyPopupWatch = null; }
+  if (state.spotifyPopup) { try { state.spotifyPopup.close(); } catch {} state.spotifyPopup = null; }
+  resetSpotifyFallback();
+  setSpotifyStatus("Spotify conectado", "badge-ok");
+  $("#connect-spotify").textContent = "Reconectar Spotify";
+  $("#connect-spotify").disabled = false;
+  loadSpotifyPlaylists();
+}
+
+window.addEventListener("message", (ev) => {
+  if (ev.origin !== window.location.origin) return;
+  if (!ev.data || ev.data.type !== "bpm-spotify-oauth") return;
+  if (ev.data.ok) {
+    try { ev.source?.close?.(); } catch {}
+    finishSpotifyConnect();
+  } else {
+    setSpotifyStatus("Autorização não concluída (" + (ev.data.error || "erro desconhecido") + ").", "error");
+    $("#connect-spotify").disabled = false;
   }
-};
+});
 
 async function loadSpotifyPlaylists(btn) {
   try {
     const data = await apiJson("/api/playlists");
-    if (btn) btn.textContent = "Playlists carregadas";
-    const sel = $("#playlist-select"); sel.innerHTML = "";
-    for (const p of data.playlists || []) sel.appendChild(new Option(`${p.name} (${p.tracks_total ?? "?"}) — ${p.owner || ""}`, `https://open.spotify.com/playlist/${p.id}`));
-    if (sel.options.length === 0) { $("#file-result").textContent = "Nenhuma playlist retornada. Verifique as credenciais do Spotify."; }
-  } catch (err) { if (btn) btn.textContent = "Carregar playlists"; $("#file-result").textContent = "Spotify: " + err.message; }
+    const sel = $("#playlist-select");
+    sel.innerHTML = "";
+    const items = data.playlists || [];
+    if (btn) btn.classList.contains("hidden") || (btn.textContent = "Playlists carregadas");
+    if (items.length === 0) {
+      setFileResult("Nenhuma playlist retornada. Verifique as permissões da sua conta Spotify.", "error");
+      sel.classList.add("hidden");
+      $("#import-playlist").classList.add("hidden");
+      return;
+    }
+    for (const p of items) sel.appendChild(new Option(`${p.name} (${p.tracks_total ?? "?"}) — ${p.owner || ""}`, p.id));
+    sel.classList.remove("hidden");
+    $("#import-playlist").classList.remove("hidden");
+    setFileResult("");
+  } catch (err) {
+    if (btn) btn.textContent = "Carregar playlists";
+    setFileResult("Spotify: " + err.message, "error");
+  }
+}
+function setFileResult(message, tone = "muted") {
+  const el = $("#file-result");
+  el.textContent = message;
+  el.className = tone;
+  el.classList.toggle("hidden", !message);
+  $("#spotify-error").classList.add("hidden");
 }
 
 $("#load-playlists").onclick = async (e) => {
   const btn = e.target;
   btn.textContent = "Carregando...";
-  await loadSpotifyPlaylists(btn);
+  try { await loadSpotifyPlaylists(btn); } finally { if (btn.textContent !== "Playlists carregadas") btn.textContent = "Carregar playlists"; }
 };
 $("#import-playlist").onclick = async () => {
-  const ref = $("#playlist-select").value;
-  if (!ref) return;
+  const id = $("#playlist-select").value;
+  if (!id) { setFileResult("Selecione uma playlist.", "error"); return; }
   try {
-    const data = guard(await api("/api/import/spotify", { method: "POST", body: JSON.stringify({ reference: ref }) }));
-    renderImportPreview(new Set()); $("#file-result").textContent = `Importada "${data.playlist_name}" — ${data.track_count} faixas.`;
-    await cacheSource("spotify", data.playlist_name, data.track_count, data.playlist_id);
-    await refreshImportOptions();
-  } catch (err) { $("#file-result").textContent = "Erro: " + err.message; }
+    const data = guard(await apiJson("/api/import/spotify", { method: "POST", body: JSON.stringify({ reference: `spotify:${id}` }) }));
+    setFileResult(`Importada "${data.playlist_name}" — ${data.track_count} faixas.`, "badge-ok");
+    await refreshSourceSelect();
+  } catch (err) { setFileResult("Erro: " + err.message, "error"); }
 };
 $("#upload-file").onclick = async () => {
   const input = $("#file-input");
-  if (!input.files.length) return;
+  if (!input.files.length) { setFileResult("Escolha um arquivo primeiro.", "error"); return; }
   const fd = new FormData(); fd.append("file", input.files[0]);
   try {
-    const r = await api("/api/import/file", { method: "POST", body: fd });
-    const data = guard(r);
-    $("#file-result").textContent = `Arquivo "${data.filename}" validado — ${data.track_count} faixas (import_id: ${data.import_id}).`;
-    await cacheSource("file", data.filename, data.track_count, data.import_id);
-    await refreshImportOptions();
-  } catch (err) { $("#file-result").textContent = "Erro: " + err.message; }
+    const data = guard(await apiJson("/api/import/file", { method: "POST", body: fd }));
+    setFileResult(`Arquivo "${data.filename}" validado — ${data.track_count} faixas (import_id: ${data.import_id}).`, "badge-ok");
+    await refreshSourceSelect();
+  } catch (err) { setFileResult("Erro: " + err.message, "error"); }
 };
 
-/* cache local opcional (fallback) para fontes de faixas */
-const SRC_KEY = "bpm_sources";
+/* cache local opcional (fallback legado) para fontes de faixas */
 function getCachedSources() { try { return JSON.parse(localStorage.getItem(SRC_KEY) || "[]"); } catch { return []; } }
-async function cacheSource(kind, label, count, extra) {
-  const list = getCachedSources();
-  const id = kind === "spotify" ? (extra || label) : extra;
-  if (!list.find((s) => s.id === id)) list.push({ kind, label, count, id });
-  localStorage.setItem(SRC_KEY, JSON.stringify(list.slice(-10)));
-}
-async function refreshImportOptions() { return refreshSourceSelect(); }
-
-function renderImportPreview(tracks) {}
 
 /* ---------------- analyze ---------------- */
 async function refreshSourceSelect() {
@@ -222,27 +298,27 @@ async function refreshSourceSelect() {
   const list = [];
   if (syncedResp.status === "fulfilled") {
     for (const p of syncedResp.value.synced || []) {
-      list.push({ key: `spotify:${p.id}`, kind: "spotify", id: p.id, label: p.name, count: p.track_count });
+      list.push({ key: `spotify:${p.id}`, kind: "spotify", id: p.id, label: p.name, count: p.track_count, server: true });
     }
   }
   if (importsResp.status === "fulfilled") {
     for (const it of importsResp.value.imports || []) {
-      list.push({ key: `file:${it.import_id}`, kind: "file", id: it.import_id, label: it.name || it.filename || it.import_id, count: it.track_count });
+      list.push({ key: `file:${it.import_id}`, kind: "file", id: it.import_id, label: it.name || it.filename || it.import_id, count: it.track_count, server: true });
     }
   }
   if (!list.length) {
     for (const cached of getCachedSources()) {
       const key = `${cached.kind}:${cached.id}`;
-      if (!list.find((item) => item.key === key)) list.push({ key, ...cached });
+      if (!list.find((item) => item.key === key)) list.push({ key, kind: cached.kind, id: cached.id, label: cached.label, count: cached.count, server: false });
     }
   }
   state.sourceOptions = list;
   const sel = $("#source-select");
   sel.innerHTML = "";
   for (const s of list) sel.appendChild(new Option(`${s.label} (${s.count ?? 0} faixas)`, s.key));
+  if (!list.length) sel.innerHTML = '<option value="">Nenhuma fonte importada ainda</option>';
 }
 async function resolveTracks(source) {
-  if (!source) return [];
   const s = state.sourceOptions.find((it) => it.key === source);
   if (!s) return [];
   if (s.kind === "file") {
@@ -254,8 +330,8 @@ async function resolveTracks(source) {
 }
 async function renderAnalyze() {
   await refreshSourceSelect();
-  if (!state.sourceOptions.length) $("#source-select").innerHTML = '<option value="">Nenhuma fonte importada ainda</option>';
 }
+
 $("#tolerance").oninput = () => $("#tol-label").textContent = $("#tolerance").value;
 $("#analyze-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -267,22 +343,35 @@ async function runAnalyze(force) {
   const target = parseFloat($("#target-bpm").value);
   const tolerance = parseFloat($("#tolerance").value);
   const name = $("#analysis-name").value || "Meu set";
+  const key = $("#source-select").value || "";
+  const source = state.sourceOptions.find((it) => it.key === key);
+  if (!source || !source.count) { $("#analyze-error").textContent = "Selecione uma origem com faixas importadas."; $("#analyze-error").classList.remove("hidden"); return; }
   try {
-    const tracks = await resolveTracks($("#source-select").value);
-    if (!tracks.length) throw new Error("Selecione uma origem com faixas importadas.");
-    const key = $("#source-select").value || "";
-    const ref = key.startsWith("file:") ? key.slice("file:".length) : key.slice("spotify:".length);
-    const body = { name, target_bpm: target, tolerance_bpm: tolerance, tracks };
-    if (ref) body.reference = ref;
-    if (force) body.force = true;
-    const data = guard(await api("/api/analyze", { method: "POST", body: JSON.stringify(body) }));
-    if (data.reused) {
-      const banner = $("#reuse-banner");
-      banner.classList.remove("hidden");
-      $("#reuse-banner-text").textContent = `Reanalisamos a mesma origem (${data.reference || "referência"}) com BPM alvo ${data.target_bpm}. Resultado reaproveitado da análise anterior — marque à direita para forçar nova análise.`;
+    const btn = $("#analyze-btn");
+    btn.disabled = true;
+    const body = { name, target_bpm: target, tolerance_bpm: tolerance };
+    if (source.server) {
+      body.reference = key; // spotify:<id> ou file:<import_id> — o BPM Match resolve no backend
+      body.tracks = [];
+    } else {
+      const tracks = await resolveTracks(key);
+      if (!tracks.length) throw new Error("Fonte sem faixas resolvíveis. Reimporte a playlist/arquivo.");
+      body.tracks = tracks; // fallback legado (fonte apenas no cache local)
     }
-    state.analysis = data; renderAnalysis(data);
-  } catch (err) { $("#analyze-error").textContent = err.message; $("#analyze-error").classList.remove("hidden"); }
+    if (force) body.force = true;
+    const data = guard(await apiJson("/api/analyze", { method: "POST", body: JSON.stringify(body) }));
+    if (data.reused) {
+      $("#reuse-banner").classList.remove("hidden");
+      $("#reuse-banner-text").textContent = `Reanalisamos a mesma origem (${data.reference || "referência"}) com BPM alvo ${data.target_bpm}. Resultado reaproveitado da análise anterior — use o botão para forçar nova análise.`;
+    }
+    state.analysis = data;
+    renderAnalysis(data);
+  } catch (err) {
+    $("#analyze-error").textContent = err.message;
+    $("#analyze-error").classList.remove("hidden");
+  } finally {
+    $("#analyze-btn").disabled = false;
+  }
 }
 $("#reanalyze").onclick = () => runAnalyze(true);
 const DECISION_LABEL = { recommended: ["ok", "RECOMENDADA"], rejected: ["no", "REJEITADA"], insufficient: ["mid", "INSUFICIENTE"], conflict: ["no", "CONFLITO"] };
@@ -304,7 +393,7 @@ function renderAnalysis(data) {
     const tabs = it.reasons?.join(" ") || "";
     const rev = it.review === "approved" ? "✓" : it.review === "rejected" ? "✗" : "—";
     const dep = it.dependency_error ? ` <span class="badge-mid" title="${esc(it.dependency_error)}">dep.</span>` : "";
-    const selCell = it.decision === "recommended"
+    const selCell = it.decision === "recommended" && !it.dependency_error
       ? `<input type="checkbox" class="sel-chk" data-ordinal="${it.ordinal}">`
       : "";
     tb.querySelector("tbody").insertAdjacentHTML("beforeend",
@@ -328,7 +417,7 @@ function renderAnalysis(data) {
     const decision = b.dataset.approve ? "approved" : "rejected";
     (async () => {
       try {
-        guard(await api(`/api/analyses/${data.analysis_id}/review?item_index=${idx}&decision=${decision}`, { method: "POST", body: JSON.stringify({}) }));
+        guard(await apiJson(`/api/analyses/${data.analysis_id}/review?item_index=${idx}&decision=${decision}`, { method: "POST", body: JSON.stringify({}) }));
         const fresh = await apiJson(`/api/analyses/${data.analysis_id}`);
         state.analysis = fresh; renderAnalysis(fresh);
       } catch (err) { alert(err.message); }
@@ -341,7 +430,7 @@ $("#export-html").onclick = () => exportReport("html");
 async function exportReport(fmt) {
   if (!state.analysis) return;
   try {
-    const data = guard(await api("/api/reports", { method: "POST", body: JSON.stringify({ analysis_id: state.analysis.analysis_id, format: fmt }) }));
+    const data = guard(await apiJson("/api/reports", { method: "POST", body: JSON.stringify({ analysis_id: state.analysis.analysis_id, format: fmt }) }));
     window.open(`/api/reports/${data.report_id}/download`, "_blank");
   } catch (err) { alert(err.message); }
 }
@@ -350,9 +439,10 @@ async function exportReport(fmt) {
 function setDownloadFeedback(message, tone = "muted") {
   const el = $("#download-feedback");
   el.textContent = message || "";
-  el.className = `${tone} ${message ? "" : "hidden"}`.trim();
+  el.className = tone + (message ? "" : " hidden");
+  el.classList.remove("badge-ok");
+  if (tone === "badge-ok") el.classList.add("badge-ok");
 }
-function resetDownloadResult() { $("#download-result").innerHTML = ""; $("#download-result").classList.add("hidden"); }
 function resetDownloadResult() { $("#download-result").innerHTML = ""; $("#download-result").classList.add("hidden"); }
 
 async function renderLibrary() {
@@ -371,18 +461,18 @@ $("#go-match").onclick = async () => {
   try {
     setDownloadFeedback("");
     resetDownloadResult();
-    const items = state.analysis.items.filter((i) => i.decision === "recommended");
+    const items = state.analysis.items.filter((i) => i.decision === "recommended" && !i.dependency_error);
     const picked = state.selectedOrdinals.size
       ? items.filter((i) => state.selectedOrdinals.has(i.ordinal))
       : [];
     const tracks = picked.length ? picked.map((i) => i.track) : items.map((i) => i.track);
     if (!tracks.length) { alert("Nenhuma faixa recomendada para comparar."); return; }
-    if (!picked.length && items.length) {
-      setDownloadFeedback("Nenhuma faixa selecionada — a coluna Sel. marca quais recomendadas serão confirmadas.", "muted");
+    if (!picked.length) {
+      setDownloadFeedback("Nenhuma faixa selecionada — marque as recomendadas que deseja confirmar; nada é selecionado por padrão.", "muted");
     }
-    const cmp = guard(await api("/api/library/compare", { method: "POST", body: JSON.stringify({ tracks }) }));
+    const cmp = guard(await apiJson("/api/library/compare", { method: "POST", body: JSON.stringify({ tracks }) }));
     $("#dryrun-info").textContent = `Faltantes: ${cmp.missing_count} de ${tracks.length} faixas · na biblioteca: ${cmp.matched_count}.`;
-    const dr = guard(await api("/api/library/dryrun", { method: "POST", body: JSON.stringify({ tracks: cmp.missing }) }));
+    const dr = guard(await apiJson("/api/library/dryrun", { method: "POST", body: JSON.stringify({ tracks: cmp.missing }) }));
     const md = $("#missing-table");
     md.innerHTML = "<thead><tr><th>Faixa</th><th>Status</th><th>Qualidade</th><th>Motivo</th></tr></thead><tbody>" +
       dr.selections.map((s) => `<tr><td>${esc(s.track.name)}</td><td class="badge-${s.status === "found" ? "ok" : "no"}">${esc(s.status)}</td><td>${esc(s.quality || "—")}</td><td>${esc(s.reason || "")}</td></tr>`).join("") + "</tbody>";
@@ -441,7 +531,7 @@ function pollJob(jobId) {
   state.activeJob = jobId;
   const tick = async () => {
     try {
-      const data = guard(await api(`/api/library/jobs/${jobId}`));
+      const data = guard(await apiJson(`/api/library/jobs/${jobId}`));
       renderJobProgress(data);
       if (data.status === "completed" || data.status === "failed") {
         clearInterval(state.jobTimer); state.jobTimer = null;
@@ -481,10 +571,10 @@ async function renderReports() {
   } catch (err) { $("#reports-empty").textContent = "Erro: " + err.message; }
 }
 
-/* helper de debug: mostra JSON no console, não na tela */
+/* helper de debug */
 function say(data) { console.debug("bpm-match:", data); }
 
 /* init */
 (function init() {
-  if (state.token) showApp(); else showLogin();
+  initSession(false).catch((err) => { console.error(err); showBanner("Falha ao iniciar sessão: " + err.message); });
 })();

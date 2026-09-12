@@ -9,8 +9,8 @@ Leia junto com `context.md`, `services/web/static/app.js`, `index.html`, o PRD
 
 | Aba | Estado atual | Ajuste |
 | --- | ------------ | ------ |
-| Login / Registro | funcional | mensagem para sessão expirada; loading no botão; erro por código |
-| Dashboard | tiles + fluxo | estado útil pós-login; vazio com CTA para Importar |
+| Sessão anônima | removida (login/registro) | abre no dashboard direto; badge "Sessão anônima"; botão "Nova sessão" (logout + reload) |
+| Dashboard | tiles + fluxo | estado útil pós-sessão; vazio com CTA para Importar |
 | Importar | manual ("Carregar playlists") | carregar playlists automático pós-conexão; mensagens por falha Spotify |
 | BPM Match | origem + analisar | origem = referência estável; reuso de análise com banner; seleção de recommended |
 | Biblioteca | compare/dryrun/confirm | dry_run_id; progresso por lote + por item via polling |
@@ -20,39 +20,47 @@ Leia junto com `context.md`, `services/web/static/app.js`, `index.html`, o PRD
 
 ```js
 state = {
-  token, user,
+  session: null,             // {owner, csrf_token, ...} de GET /api/session
   analysis: null,            // análise atual (com items, summary)
-  sourceOptions: [],         // [{key:"spotify:<id>"|"file:<import_id>", ...}]
+  sourceOptions: [],         // [{key:"spotify:<id>"|"file:<import_id>", server: bool, ...}]
   selectedOrdinals: Set(),   // ordinais de faixas recommended escolhidas → library
   lastDryRun: null,          // {dry_run_id, expires_at, selections, consumed}
   activeJob: null,           // {job_id, poll}
+  spotifyPopup/spotifyPoll/spotifyPopupWatch,  // estado do fluxo de autorização
 }
 ```
-- **Fonte primária de fontes**: `/api/synced` + `/api/imports`. `localStorage`
-  (`bpm_sources`) vira fallback legado apenas quando backend vazio e pode ser removido.
+- **Sessão**: criada com `GET /api/session` (cookie HttpOnly) no `init()`. Sem JWT nem
+  usuário em `localStorage`.
+- **Fontes**: fonte primária via `/api/synced` + `/api/imports` (marcadas `server: true`).
+  `localStorage` (`bpm_sources`) é fallback legado apenas quando o backend está vazio.
 
-## 3. Autenticação e sessão
+## 3. Sessão anônima e CSRF
 
-- `api()`: em `401`, guarda mensagem (`msg`) e chama `showLogin(msg)`.
-- `showLogin(message)` preenche `#login-error` com texto explicativo:
-  - expirada: "Sua sessão expirou. Entre novamente — seus dados continuam salvos."
-  - `UNAUTHORIZED` em login: "Usuário ou senha inválidos."
-- Botão de login tem estado `loading` (disabled + spinner) enquanto a chamada roda.
-- Pós-login: `showApp()` mostra dashboard (renderDashboard) e, se `spotify connected`,
-  dispara carregamento de playlists em background.
+- `init()`: `GET /api/session` → `state.session`; se recém-criada (`created`), banner
+  informativo ("Nova sessão anônima criada..."). `api()` envia `X-CSRF-Token`
+  automaticamente em POST/PUT/PATCH/DELETE.
+- Em `401` com erro `SESSION_INVALID`: `api()` recria a sessão (`initSession(true)`)
+  e relança erro com aviso — a UI sugere recarregar se algo não funcionar.
+- Botão **Nova sessão**: `POST /api/auth/logout` + `location.reload()` (confirma antes,
+  pois dados da sessão anterior não são mais acessíveis).
+- `GET /api/auth/login` / `register` não existem mais na UI (backend retorna 410).
 
 ## 4. Importar (playlists)
 
 - Ao entrar na aba Importar:
   1. `GET /api/auth/spotify/status`.
   2. Se conectado → `GET /api/playlists` (auto) → popular `#playlist-select` com
-     `{id}` como valor de referência (`spotify:<id>`); mensagem "nenhuma playlist" quando vazio.
-  3. Se não conectado → botão "Conectar Spotify" destacado + mensagem acionável
-     (`SPOTIFY_NOT_CONNECTED`/`SPOTIFY_TOKEN_EXPIRED`).
-- Conectar via OAuth: abre popup, polling de `status` (já existe) e, ao confirmar,
-  chama `POST /api/auth/spotify/claim` para vincular o token pendente ao usuário.
-- Importar selecionada: `POST /api/import/spotify {reference}`; erro não vira lista
-  vazia silenciosa — exibe a mensagem do backend.
+     `{id}` como valor (o import envia `reference: "spotify:<id>"`); mensagem
+     "nenhuma playlist" quando vazio.
+  3. Se não conectado → botão **Conectar Spotify** destacado.
+- Conectar via OAuth (PKCE, popup):
+  1. `GET /api/auth/spotify` → `{url}`.
+  2. `window.open(url)` (se bloqueado: link de fallback + polling de status).
+  3. Listener `window.message` para `bpm-spotify-oauth` (`ok`) fecha o popup e conclui.
+  4. `GET /api/auth/spotify/status` em polling enquanto o popup está aberto
+     (fallback quando o postMessage não chegar); em `connected`, carrega playlists.
+- Importar selecionada: `POST /api/import/spotify {reference: "spotify:<id>"}`;
+  erro não vira lista vazia silenciosa — exibe a mensagem do backend.
 - Depois de importar, atualizar `refreshSourceSelect()` (já existe) e forçar recarga.
 
 ## 5. BPM Match
@@ -93,10 +101,12 @@ state = {
 
 | Código | Mensagem na UI |
 | ------ | -------------- |
-| `UNAUTHORIZED` (login) | Usuário ou senha inválidos. |
-| `UNAUTHORIZED` (sessão) | Sessão expirada — entre novamente. |
-| `SPOTIFY_NOT_CONNECTED` / `SPOTIFY_TOKEN_EXPIRED` | Conecte o Spotify para ver suas playlists. |
+| `SESSION_INVALID` | Sessão expirada — uma nova sessão anônima foi criada. Recarregue se necessário. |
+| `CSRF_INVALID` | Sessão protegida — recarregue a página para renovar o token. |
+| `SPOTIFY_NOT_CONNECTED` / `SPOTIFY_REVOKED` / `SPOTIFY_REFRESH_FAILED` | Conecte o Spotify para ver suas playlists. |
+| `OAUTH_STATE_INVALID` (callback) | Autorização não concluída. Tente novamente. |
 | `PLAYLIST_NOT_FOUND` / `PLAYLIST_INACCESSIBLE` | Playlist indisponível. Escolha outra. |
+| `SPOTIFY_API_ERROR` (429) | Spotify limitou as requisições — aguarde e tente novamente. |
 | `DRYRUN_EXPIRED` / `DRYRUN_NOT_FOUND` | Dry-run expirado. Rode a comparação novamente. |
 | `DOWNLOAD_JOB_CONFIRM_REQUIRED` | Nenhuma faixa apta para download. Verifique ALLOW_DOWNLOADS. |
 | `TIDAL_UPSTREAM_ERROR` / `CATALOG_UNREACHABLE` | Catálogo indisponível — tente novamente. |
@@ -107,21 +117,26 @@ state = {
 - **loading**: botão/guia com spinner; nunca tela branca.
 - **vazio**: mensagem + CTA (ex.: dashboard vazio → "Importar").
 - **erro recuperável**: banner com mensagem do mapa; ação para repetir.
-- **sessão expirada**: tela de login com mensagem.
+- **sessão recriada**: banner informativo (dados da sessão anterior inacessíveis).
 - **sucesso parcial**: resumo do job com itens ok/falha e link para relatório de falhas.
 
 ## 9. Testes de interface / regressão
 
-- `tests/e2e/test_flow.py` adiciona cobertura via API (contrato do frontend):
-  - `test_web_dryrun_returns_id_and_download_job_pollable`
-  - `test_web_analyze_reference_reuse` (reusa via BFF)
-  - `test_web_spotify_token_per_user_isolation`
+- `tests/e2e/test_web_session.py` cobre o contrato do frontend:
+  - sessão anônima + CSRF + logout via `test_anonymous_session_and_cookie`,
+    `test_csrf_required_and_rotated`;
+  - fluxo Spotify completo (popup → import → analyze) em
+    `test_spotify_pkce_connect_import_and_analyze`;
+  - estados de erro e `test_no_tokens_leak_in_api_responses`.
+- `tests/e2e/test_flow.py`: UI e fluxo web migrados para sessão anônima
+  (`test_web_bff_and_ui`, `test_web_download_confirmation_and_import_lookup`).
 - Smoke: `GET /` e `/static/app.js` retornam 200 e contêm marcadores novos
-  (`claim`, `dry_run_id`, `catalog_unavailable`).
+  (`X-CSRF-Token`, `bpm-spotify-oauth`, `spotify:<id>`, `Nova sessão`).
 
 ## 10. Não fazer
 
 - Não introduzir framework/bundler.
 - Não mover regra de negócio crítica para `localStorage`.
 - Não pré-selecionar faixas recommended.
-- Não remover `refreshImportOptions`/`renderLibrary` existentes sem atualizar os testes e2e.
+- Não includir tela de login/registro (removida; backend retorna 410).
+- Não mostrar tokens Spotify em respostas/console.

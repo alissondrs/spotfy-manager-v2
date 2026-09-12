@@ -29,6 +29,17 @@ def _auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _web_session(c: httpx.Client, stack) -> dict:
+    """Cria a sessão anônima via BFF e retorna o token CSRF válido."""
+    r = c.get(_url(stack, "web", "/api/session"))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _web_headers(session: dict) -> dict:
+    return {"X-CSRF-Token": session["session"]["csrf_token"]}
+
+
 def _wait_job(stack, c: httpx.Client, headers: dict, job_id: str, service: str = "library", timeout: float = 30.0) -> dict:
     base = _url(stack, service, "/jobs") if service == "library" else _url(stack, "web", "/api/library/jobs")
     deadline = time.time() + timeout
@@ -169,9 +180,9 @@ def test_library_compare_dryrun_download(stack):
 
 
 def test_web_download_confirmation_and_import_lookup(stack):
-    token = _auth_token(stack)
-    headers = _auth_headers(token)
     c = httpx.Client(timeout=60.0)
+    session = _web_session(c, stack)
+    headers = _web_headers(session)
     md = b"# Set\n\n1. One More Time - Daft Punk\n"
     r = c.post(
         _url(stack, "web", "/api/import/file"),
@@ -181,7 +192,7 @@ def test_web_download_confirmation_and_import_lookup(stack):
     assert r.status_code == 200, r.text
     import_id = r.json()["import_id"]
 
-    r = c.get(_url(stack, "web", f"/api/import/{import_id}"), headers=headers)
+    r = c.get(_url(stack, "web", f"/api/import/{import_id}"))
     assert r.status_code == 200, r.text
     assert r.json()["import_id"] == import_id
     assert r.json()["tracks"][0]["name"] == "One More Time"
@@ -203,18 +214,36 @@ def test_web_download_confirmation_and_import_lookup(stack):
 
 
 def test_web_bff_and_ui(stack):
-    token = _auth_token(stack)
-    headers = _auth_headers(token)
     c = httpx.Client(timeout=30.0)
+    session = _web_session(c, stack)
+    headers = _web_headers(session)
     r = c.get(_url(stack, "web", "/health"))
     assert r.status_code == 200 and r.json()["service"] == "web"
     r = c.get(_url(stack, "web", "/"))
     assert r.status_code == 200 and "BPM Match" in r.text
     r = c.get(_url(stack, "web", "/static/app.js"))
     assert r.status_code == 200
-    r = c.get(_url(stack, "web", "/api/me"), headers=headers)
-    assert r.json()["username"] == USER
-    r = c.get(_url(stack, "web", "/api/analyses"), headers=headers)
+    r = c.get(_url(stack, "web", "/api/me"))
+    assert r.json()["anonymous"] is True
+    assert r.json()["session"]["owner"].startswith("anon_")
+
+    md = b"# Set\n\n1. One More Time - Daft Punk\n2. Get Lucky - Daft Punk, Pharrell\n"
+    r = c.post(
+        _url(stack, "web", "/api/import/file"),
+        files={"file": ("set.md", md, "text/markdown")},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    import_id = r.json()["import_id"]
+    r = c.post(
+        _url(stack, "web", "/api/analyze"),
+        json={"name": "Set", "target_bpm": 120, "tolerance_bpm": 3,
+              "tracks": [], "reference": f"file:{import_id}"},
+        headers=headers,
+    )
+    assert r.status_code == 200, (r.status_code, r.text)
+    assert r.json()["analysis_id"]
+    r = c.get(_url(stack, "web", "/api/analyses"))
     c.close()
     assert r.status_code == 200 and r.json()["analyses"]
 
