@@ -1,0 +1,43 @@
+# Git / CI
+.git
+.github
+.gitignore
+ci-project.yaml
+*.md
+
+# Ambiente e segredos
+.env
+.env.local
+.env.*
+.cache
+*.pem
+*.key
+token*.json
+
+# Dados e artefatos locais
+data/
+downloads/
+logs/
+*.sqlite
+*.db
+
+# Python (build local/venv nunca entra na imagem)
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+coverage/
+.pytest_cache/
+
+# Não copiar código de outros serviços nem tooling do workspace
+services/*/tests/
+scripts/
+Makefile
+docs/
+observability/
+specs/
+.specify/
+test*.sh

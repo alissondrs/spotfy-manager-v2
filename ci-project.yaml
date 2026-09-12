@@ -1,0 +1,84 @@
+# ci-project.yaml — Contrato de CI/CD do spotfy-manager-v2
+#
+# Este arquivo é a fonte de verdade da configuração de CI/CD deste projeto.
+# Os workflows (.github/workflows/*.yml) devem ler daqui antes de executar.
+# Serve também de referência para o harness-kit padronizar novos projetos.
+
+version: 1
+
+# Imagem base usada nos builds Docker (todos os serviços)
+image:
+  python: "3.11"
+  base: "python:3.11-slim"
+
+# Repositório de imagens Docker Hub
+registry:
+  dockerhub_repo: alissondrs/spotfy-manager-v2
+  username_var: DOCKERHUB_USERNAME
+  token_secret: DOCKERHUB_TOKEN
+
+# Branches principais
+branches:
+  integration: develop
+  production: main
+
+# Serviços e portas (ordem estável — usada em matriz de build e deploy)
+# IMPORTANTE: manter estes nomes estáveis; são os job names usados na
+# proteção de branches (required checks).
+services:
+  - { name: web,        port: 8000 }
+  - { name: identity,   port: 8101 }
+  - { name: fileimport, port: 8102 }
+  - { name: playlist,   port: 8103 }
+  - { name: catalog,    port: 8104 }
+  - { name: bpm-match,  port: 8105 }
+  - { name: library,    port: 8106 }
+  - { name: report,     port: 8107 }
+
+# Convenção de tags de imagem
+tags:
+  lab: develop-<serviço>-sha-<commit>   # ex.: develop-web-sha-abc123
+  prod: prod-<serviço>-sha-<commit>
+
+# Gates do CI (na ordem executada pelo workflow ci.yml)
+ci_gates:
+  - python_311
+  - install_contracts
+  - install_services
+  - test_contract
+  - test_e2e
+  - lint
+  - pip_audit
+  - compose_validate
+  - secret_scan
+  - docker_build
+
+# Secrets a serem injetados por ambiente (nunca via .env versionado)
+secrets:
+  lab:
+    - JWT_SECRET
+    - SPOTIFY_ACCESS_TOKEN
+    - SPOTIFY_CLIENT_ID
+    - SPOTIFY_CLIENT_SECRET
+    - TIDAL_TOKEN_FILE
+    - TIDAL_REFRESH_TOKEN
+    - HIFI_API_URL
+    - GF_ADMIN_PASSWORD
+
+# Deploy
+deploy:
+  lab:
+    file: deploy/compose/docker-compose.deploy.yml
+    env: lab
+    images: develop-*
+    allow_downloads: "0"
+  production:
+    file: deploy/compose/docker-compose.deploy.yml
+    env: production
+    images: prod-*
+    allow_downloads: "0"
+
+# Retenção de artefatos (dias)
+artifacts:
+  retention_days: 7
+  manifest: image-manifest.json

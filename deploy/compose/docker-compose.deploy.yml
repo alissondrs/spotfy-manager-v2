@@ -1,0 +1,114 @@
+# docker-compose.deploy.yml — Deploy do spotfy-manager-v2
+#
+# Compose usado APENAS para deploy (lab e produção), sem `build`.
+# As imagens são publicadas no Docker Hub CI e referenciadas por variável.
+#
+# Uso:
+#   IMAGE_TAG=develop-web-sha-<commit> docker compose -f docker-compose.deploy.yml up -d
+#
+# Convenção de tags: <env>-<serviço>-sha-<commit> (ex.: prod-library-sha-abc123).
+# Secrets vêm do Harness como variáveis de ambiente por serviço (nunca .env).
+
+x-common-env: &common_env
+  APP_ENV: ${APP_ENV:-lab}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET é obrigatório}
+  JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-480}
+  DATA_DIR: /data
+  SPOTIFY_ACCESS_TOKEN: ${SPOTIFY_ACCESS_TOKEN:-}
+  SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+  SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+  HIFI_API_URL: ${HIFI_API_URL:-}
+  TIDAL_MOCK: ${TIDAL_MOCK:-1}
+  TIDAL_TOKEN_FILE: ${TIDAL_TOKEN_FILE:-}
+  TIDAL_REFRESH_TOKEN: ${TIDAL_REFRESH_TOKEN:-}
+  TIDAL_COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
+  # Downloads SEMPRE desabilitados em ambiente de validação/produção pelo Harness
+  ALLOW_DOWNLOADS: ${ALLOW_DOWNLOADS:-0}
+
+services:
+  web:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${WEB_IMAGE_TAG:?WEB_IMAGE_TAG é obrigatório}
+    ports: ["8000:8000"]
+    environment: *common_env
+    depends_on:
+      identity: { condition: service_healthy }
+      fileimport: { condition: service_healthy }
+      playlist: { condition: service_healthy }
+      catalog: { condition: service_healthy }
+      bpm-match: { condition: service_healthy }
+      library: { condition: service_healthy }
+      report: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  identity:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG é obrigatório}
+    environment: *common_env
+    volumes: [identity_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8101/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+  fileimport:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${FILEIMPORT_IMAGE_TAG:?FILEIMPORT_IMAGE_TAG é obrigatório}
+    environment: *common_env
+    volumes: [fileimport_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8102/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+  playlist:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${PLAYLIST_IMAGE_TAG:?PLAYLIST_IMAGE_TAG é obrigatório}
+    environment: *common_env
+    volumes: [playlist_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8103/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+  catalog:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${CATALOG_IMAGE_TAG:?CATALOG_IMAGE_TAG é obrigatório}
+    ports: ["8104:8104"]
+    environment: *common_env
+    volumes: [catalog_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8104/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+  bpm-match:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${BPM_MATCH_IMAGE_TAG:?BPM_MATCH_IMAGE_TAG é obrigatório}
+    environment: *common_env
+    volumes: [bpm_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8105/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+  library:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${LIBRARY_IMAGE_TAG:?LIBRARY_IMAGE_TAG é obrigatório}
+    environment:
+      <<: *common_env
+      DOWNLOAD_DIR: /downloads
+    volumes:
+      - library_data:/data
+      - library_downloads:/downloads
+    depends_on:
+      catalog: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8106/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+  report:
+    image: ${DOCKERHUB_USERNAME}/spotfy-manager-v2:${REPORT_IMAGE_TAG:?REPORT_IMAGE_TAG é obrigatório}
+    ports: ["8107:8107"]
+    environment: *common_env
+    volumes: [report_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8107/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+    restart: unless-stopped
+
+volumes:
+  identity_data:
+  fileimport_data:
+  playlist_data:
+  catalog_data:
+  bpm_data:
+  library_data:
+  library_downloads:
+  report_data:

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotfy-contracts"
+version = "0.1.0"
+description = "Contratos e biblioteca compartilhada entre os serviços do spotfy-manager-v2"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.9",
+    "PyJWT>=2.9",
+    "python-dotenv>=1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["spotfy_contracts*"]

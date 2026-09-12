@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protótipo — Fluxo Spotify → BPM Match → Download</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; background:#12141c; color:#e8e8ef; margin:0; padding:0 16px 60px; }
+.topbar { display:flex; align-items:center; gap:24px; padding:14px 0; border-bottom:1px solid #232839; margin-bottom:20px; }
+.brand { font-weight:700; color:#58c6b8; display:flex; align-items:center; gap:8px; }
+.brand .dot { width:10px; height:10px; border-radius:50%; background:#58c6b8; display:inline-block; }
+nav { display:flex; gap:6px; flex-wrap:wrap; }
+nav button { background:transparent; color:#9aa; border:1px solid transparent; padding:6px 12px; border-radius:8px; cursor:pointer; }
+nav button.active { background:#1e2430; color:#fff; border-color:#2a3242; }
+.spacer { flex:1; }
+.user { color:#9aa; font-size:13px; }
+.card { background:#171b26; border:1px solid #232839; border-radius:12px; padding:18px; margin-bottom:18px; }
+h1 { font-size:22px; margin:0 0 6px; }
+h2 { font-size:16px; margin:0 0 12px; color:#cdd3e1; }
+.muted { color:#9aa; font-size:13px; }
+.row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.fields { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:12px; }
+label { display:flex; flex-direction:column; gap:6px; font-size:13px; color:#b9c0d0; }
+input, select { padding:9px 10px; border-radius:8px; border:1px solid #2c3346; background:#0f1219; color:#fff; }
+button.primary { background:#58c6b8; color:#08110f; border:none; padding:9px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
+button.ghost { background:transparent; color:#9fb0c0; border:1px solid #2d354a; padding:8px 14px; border-radius:8px; cursor:pointer; }
+button.danger { background:#ff7b72; color:#160b0a; border:none; padding:9px 16px; border-radius:8px; font-weight:700; cursor:pointer; }
+button.danger:disabled { opacity:.5; cursor:not-allowed; }
+button.loading { position:relative; color:transparent !important; }
+button.loading::after { content:""; position:absolute; inset:0; margin:auto; width:16px; height:16px; border:2px solid rgba(0,0,0,.25); border-top-color:#000; border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+table { border-collapse:collapse; width:100%; font-size:13px; }
+th, td { border-bottom:1px solid #232839; padding:8px 10px; text-align:left; vertical-align:top; }
+th { color:#9aa; font-weight:600; }
+.badge-ok { color:#4cd4a3; font-weight:700; }
+.badge-no { color:#ff7b72; font-weight:700; }
+.badge-mid { color:#e3b341; font-weight:700; }
+.badge-dep { color:#8ab4ff; font-weight:700; }
+.error { color:#ff7b72; font-size:13px; }
+.banner { background:#13202c; border:1px solid #23506b; border-radius:8px; padding:10px 12px; font-size:13px; margin:10px 0; }
+.banner.ok { background:#0e2a20; border-color:#1f5740; color:#9fe8c3; }
+.banner.err { background:#33191a; border-color:#6b2323; color:#ffa7a0; }
+.progress { height:8px; background:#232839; border-radius:6px; overflow:hidden; margin:8px 0; }
+.progress > span { display:block; height:100%; background:#58c6b8; width:0%; transition:width .3s; }
+.hidden { display:none !important; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:18px; }
+.tile { background:#171b26; border:1px solid #232839; border-radius:12px; padding:16px; }
+.tile b { font-size:26px; display:block; }
+.tile span { color:#9aa; font-size:13px; }
+.steps ol { padding-left:20px; color:#b9c0d0; }
+.checkbox-row { display:flex; gap:8px; align-items:center; }
+.swatch { margin:18px 0 8px; font-size:12px; color:#8a93a8; letter-spacing:.06em; text-transform:uppercase; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="dot"></span> BPM Match <small style="opacity:.6">protótipo</small></div>
+  <div class="spacer"></div>
+</header>
+
+<p class="swatch">? Modo protótipo · troque de tela clicando nos cenários em "Cenários" no fim da página.</p>
+
+<!-- ============================ LOGIN ============================ -->
+<section id="view-login" class="card">
+  <h1>Entrar</h1>
+  <p class="muted">Acesso local ao BPM Match. Use usuário/senha criados aqui mesmo.</p>
+  <label>Usuário<input id="login-user" value="dj.alisson"></label>
+  <label style="margin-top:10px">Senha<input id="login-pass" type="password" value="senha12345"></label>
+  <p id="login-error" class="error hidden"></p>
+  <div class="row" style="margin-top:12px">
+    <button id="login-btn" class="primary">Entrar</button>
+    <button id="login-loading-btn" class="primary loading" disabled>Entrando…</button>
+    <button class="ghost" id="login-link">Registrar usuário</button>
+  </div>
+</section>
+
+<section id="view-expired" class="card hidden">
+  <h1>Sessão expirada</h1>
+  <p class="error">Sua sessão expirou. Entre novamente para continuar — seus dados (playlists e imports) continuam salvos.</p>
+  <button id="expired-login" class="primary">Voltar ao login</button>
+</section>
+
+<!-- ============================ APP ============================ -->
+<section id="view-app" class="hidden">
+  <header class="topbar" style="border-bottom:none;margin-bottom:2px">
+    <nav>
+      <button class="active">Dashboard</button>
+      <button>Importar</button>
+      <button>BPM Match</button>
+      <button>Biblioteca</button>
+      <button>Relatórios</button>
+    </nav>
+    <div class="spacer"></div>
+    <span class="user">dj.alisson</span>
+    <button class="ghost">Sair</button>
+  </header>
+
+  <!-- Dashboard -->
+  <div class="card">
+    <h2>Dashboard</h2>
+    <div class="grid">
+      <div class="tile"><b id="dash-playlists">3</b><span>Playlists</span></div>
+      <div class="tile"><b id="dash-analises">2</b><span>Análises</span></div>
+      <div class="tile"><b id="dash-arquivos">0</b><span>Arquivos na biblioteca</span></div>
+      <div class="tile"><b id="dash-relatorios">1</b><span>Relatórios</span></div>
+    </div>
+    <div id="dash-empty" class="banner hidden">Você ainda não importou playlists. Comece em <b>Importar</b>.</div>
+    <div class="steps">
+      <ol>
+        <li>Importe uma playlist do Spotify ou envie um arquivo.</li>
+        <li>Rode o BPM Match com o BPM alvo do set.</li>
+        <li>Revise e selecione as faixas que quer baixar.</li>
+        <li>Valide em dry-run e confirme o download.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Import -->
+  <div class="card">
+    <h2>Importar faixas</h2>
+    <p id="spotify-status" class="muted">✓ Spotify conectado</p>
+    <div class="row" style="margin-bottom:10px">
+      <select id="playlist-select" style="min-width:280px">
+        <option>Tech House 2026 (124 faixas)</option>
+        <option>Melodic Warm-up (98 faixas)</option>
+        <option>Peak Time Tools (150 faixas)</option>
+      </select>
+      <button class="primary">Importar selecionada</button>
+      <button class="ghost">Recarregar playlists</button>
+    </div>
+    <p id="playlist-unavailable" class="error hidden">Playlist indisponível. Reconecte o Spotify ou escolha outra.</p>
+  </div>
+
+  <!-- BPM Match -->
+  <div class="card">
+    <h2>BPM Match</h2>
+    <div class="fields">
+      <label>Origem<select><option>Tech House 2026 (124 faixas)</option><option>Arquivo: set.md</option></select></label>
+      <label>BPM alvo<input type="number" value="125"></label>
+      <label>Tolerância (±3)<input type="range" min="1" max="10" value="3"></label>
+      <label>Nome da análise<input value="Tech House 125"></label>
+    </div>
+    <button class="primary">Analisar</button>
+  </div>
+
+  <!-- BPM em progresso -->
+  <div class="card" id="analysis-loading">
+    <h2>Analisando “Tech House 125”…</h2>
+    <p class="muted">Buscando candidatos no catálogo e calculando compatibilidade (faixa 42/124).</p>
+    <div class="progress"><span style="width:34%"></span></div>
+  </div>
+
+  <!-- BPM resultado -->
+  <div class="card" id="analysis-result">
+    <div class="row">
+      <h2>Tech House 125 · alvo 125 BPM ±3</h2>
+      <span class="muted">124 faixas · 58 recomendadas · 31 rejeitadas · 20 insuficientes · 15 conflito · confiança média 87%</span>
+    </div>
+    <div id="reuse-banner" class="banner ok hidden">Análise já existente para esta playlist — reutilizada de 08/set 21:42.<button class="ghost" style="margin-left:8px">Reanalisar</button></div>
+    <div id="catalog-banner" class="banner err hidden">Catálogo Tidal indisponível em parte da análise — resultados marcam “dependência indisponível” e não são tratados como ausência de dados.</div>
+    <table>
+      <thead><tr><th>Sel.</th><th>Faixa</th><th>BPM</th><th>Conf.</th><th>Decisão</th><th>Como</th><th>Revisão</th></tr></thead>
+      <tbody>
+        <tr><td><input type="checkbox" id="sel-1"></td><td>One More Time<br><span class="muted">Daft Punk</span></td><td>126</td><td>93%</td><td><span class="badge-ok">RECOMENDADA</span></td><td>Título 100% · BPM 126 (1 do alvo)</td><td><button class="ghost">aprovar</button> <button class="ghost">rejeitar</button></td></tr>
+        <tr><td><input type="checkbox"></td><td>Get Lucky (Clean)<br><span class="muted">Daft Punk, Pharrell</span></td><td>123</td><td>88%</td><td><span class="badge-ok">RECOMENDADA</span></td><td>Título 90% · versão clean detectada</td><td><button class="ghost">aprovar</button> <button class="ghost">rejeitar</button></td></tr>
+        <tr><td><input type="checkbox"></td><td>Instant Crush<br><span class="muted">Daft Punk, J. Casablancas</span></td><td>102</td><td>71%</td><td><span class="badge-no">REJEITADA</span></td><td>BPM 102 longe do alvo</td><td><button class="ghost">aprovar</button> <button class="ghost">rejeitar</button></td></tr>
+        <tr><td><input type="checkbox" disabled></td><td>Faixa sem metadados<br><span class="muted">Artista Desconhecido</span></td><td>—</td><td>12%</td><td><span class="badge-mid">INSUFICIENTE</span></td><td>Nenhum candidato com BPM</td><td>—</td></tr>
+        <tr><td><input type="checkbox" disabled></td><td>Around the World<br><span class="muted">Daft Punk</span></td><td>121/133</td><td>40%</td><td><span class="badge-no">CONFLITO</span></td><td>Candidatos com BPM divergentes</td><td><button class="ghost">aprovar</button> <button class="ghost">rejeitar</button></td></tr>
+        <tr><td><input type="checkbox" disabled></td><td>Voyager<br><span class="muted">Daft Punk</span></td><td>—</td><td>0%</td><td><span class="badge-dep">DEP. INDISPONÍVEL</span></td><td>Catálogo indisponível — não é ausência de dados</td><td>—</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="margin-top:8px">Marque as faixas que deseja levar para a biblioteca (nenhuma vem pré-selecionada).</p>
+    <div class="row"><button class="primary" id="go-library">Ir para biblioteca com 2 selecionadas</button><button class="ghost">Exportar MD</button><button class="ghost">Exportar CSV</button><button class="ghost">Exportar HTML</button></div>
+  </div>
+
+  <!-- Biblioteca -->
+  <div class="card" id="library-card">
+    <h2>Biblioteca e downloads</h2>
+    <p class="muted">Diretório: ./downloads · 3 arquivos.</p>
+    <table>
+      <thead><tr><th>Faixa</th><th>Status</th><th>Qualidade</th><th>Motivo</th></tr></thead>
+      <tbody>
+        <tr><td>One More Time — Daft Punk</td><td><span class="badge-ok">found</span></td><td>HI_RES_LOSSLESS</td><td>Candidato Tidal 1001</td></tr>
+        <tr><td>Inner City — Good Life</td><td><span class="badge-no">not_found</span></td><td>—</td><td>Sem qualidade aceitável (HI_RES_LOSSLESS/LOSSLESS)</td></tr>
+      </tbody>
+    </table>
+    <div class="banner ok">Dry-run pronto. 1 faixa apta para confirmação (expira em 15 min).</div>
+    <div class="row">
+      <button class="danger" id="confirm-download">Confirmar download da faixa selecionada</button>
+      <button class="ghost">Refazer dry-run</button>
+    </div>
+  </div>
+
+  <!-- Download progresso -->
+  <div class="card hidden" id="download-progress">
+    <h2>Job <span id="job-id">download_a3f2</span> · em andamento</h2>
+    <div class="progress"><span id="dl-bar" style="width:66%"></span></div>
+    <p class="muted" id="dl-feedback">2 de 3 faixas concluídas…</p>
+    <table>
+      <thead><tr><th>Faixa</th><th>Status</th><th>Arquivo / Erro</th></tr></thead>
+      <tbody>
+        <tr><td>One More Time</td><td><span class="badge-ok">baixada</span></td><td>One More Time - Daft Punk.m4a (8,2 MB)</td></tr>
+        <tr><td>Get Lucky</td><td><span class="badge-mid">baixando…</span></td><td>—</td></tr>
+        <tr><td>Da Funk</td><td><span class="badge-no">falha</span></td><td>HTTP 403 Forbidden</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Download concluído parcial -->
+  <div class="card hidden" id="download-done">
+    <h2>Job concluído · 2 baixadas · 1 falha</h2>
+    <p class="muted">Confira o relatório de falhas em ./downloads/not_found.txt.</p>
+  </div>
+</section>
+
+<!-- ============================ CENÁRIOS ============================ -->
+<section class="card">
+  <h2>Cenários (mock inline)</h2>
+  <div class="row">
+    <button class="ghost" data-sc="login">Login</button>
+    <button class="ghost" data-sc="login-loading">Login carregando</button>
+    <button class="ghost" data-sc="login-invalid">Login inválido</button>
+    <button class="ghost" data-sc="expired">Sessão expirada</button>
+    <button class="ghost" data-sc="dash-empty">Dashboard vazio</button>
+    <button class="ghost" data-sc="dash">Dashboard com dados</button>
+    <button class="ghost" data-sc="pl-unavailable">Playlist indisponível</button>
+    <button class="ghost" data-sc="analysis-loading">Análise em progresso</button>
+    <button class="ghost" data-sc="analysis">Resultado + reuso</button>
+    <button class="ghost" data-sc="analysis-dep">Resultado + dep. indisponível</button>
+    <button class="ghost" data-sc="dryrun">Dry-run pronto</button>
+    <button class="ghost" data-sc="download-running">Download em progresso</button>
+    <button class="ghost" data-sc="download-partial">Sucesso parcial</button>
+    <button class="ghost" data-sc="download-disabled">Download desabilitado</button>
+  </div>
+</section>
+
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const hide = (sel) => $(sel).classList.add("hidden");
+  const show = (sel) => $(sel).classList.remove("hidden");
+  let logged = false;
+
+  function showLogin() { show("#view-login"); hide("#view-expired"); hide("#view-app"); $("#login-error").classList.add("hidden"); $("#login-btn").classList.remove("hidden"); $("#login-loading-btn").classList.add("hidden"); }
+  function showApp() { hide("#view-login"); hide("#view-expired"); show("#view-app"); }
+
+  $("#login-btn").onclick = () => { $("#login-btn").classList.add("hidden"); $("#login-loading-btn").classList.remove("hidden"); setTimeout(() => { showApp(); goLib(false); }, 700); };
+  $("#login-link").onclick = () => { $("#login-error").textContent = "Conta criada. Faça login."; $("#login-error").className = "banner ok"; };
+  $("#expired-login").onclick = showLogin;
+
+  const banners = { reuse: $("#reuse-banner"), catalog: $("#catalog-banner") };
+  const progress = $("#download-progress"), done = $("#download-done"), lib = $("#library-card");
+
+  function goLib(visible) {
+    document.querySelectorAll("#view-app .card").forEach((c) => { if (c.id && !["download-progress","download-done"].includes(c.id)) c.classList.add("hidden"); });
+    [lib].forEach((c) => { if (visible) c.classList.remove("hidden"); });
+    lib.classList.remove("hidden");
+  }
+
+  const scen = {
+    "login": showLogin,
+    "login-loading": () => { showLogin(); $("#login-btn").classList.add("hidden"); $("#login-loading-btn").classList.remove("hidden"); },
+    "login-invalid": () => { showLogin(); $("#login-error").textContent = "Usuário ou senha inválidos."; $("#login-error").className = "error"; },
+    "expired": () => { showApp(); goLib(false); hide("#view-app"); show("#view-expired"); logged = true; },
+    "dash-empty": () => { showApp(); goLib(false); show("#dash-empty"); $("#dash-playlists").textContent = 0; $("#dash-analises").textContent = 0; $("#dash-arquivos").textContent = 0; $("#dash-relatorios").textContent = 0; },
+    "dash": () => { showApp(); goLib(false); hide("#dash-empty"); $("#dash-playlists").textContent = 3; $("#dash-analises").textContent = 2; $("#dash-arquivos").textContent = 0; $("#dash-relatorios").textContent = 1; },
+    "pl-unavailable": () => { showApp(); goLib(false); show("#playlist-unavailable"); },
+    "analysis-loading": () => { showApp(); goLib(false); show("#analysis-loading"); },
+    "analysis": () => { showApp(); goLib(false); banners.reuse.classList.remove("hidden"); banners.catalog.classList.add("hidden"); },
+    "analysis-dep": () => { showApp(); goLib(false); banners.reuse.classList.add("hidden"); banners.catalog.classList.remove("hidden"); },
+    "dryrun": () => { showApp(); goLib(true); hide("#download-progress"); hide("#download-done"); },
+    "download-running": () => { showApp(); goLib(true); show("#download-progress"); hide("#download-done"); },
+    "download-partial": () => { showApp(); goLib(true); hide("#download-progress"); show("#download-done"); },
+    "download-disabled": () => { showApp(); goLib(true); const b = $("#confirm-download"); b.disabled = true; b.textContent = "Selecione ao menos 1 faixa para confirmar"; },
+  };
+  document.querySelectorAll("[data-sc]").forEach((b) => (b.onclick = () => scen[b.dataset.sc]?.()));
+  showLogin();
+})();
+</script>
+</body>
+</html>

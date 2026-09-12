@@ -1,0 +1,122 @@
+x-common-env: &common_env
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+  JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-480}
+  DATA_DIR: /data
+  SPOTIFY_ACCESS_TOKEN: ${SPOTIFY_ACCESS_TOKEN:-}
+  SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+  SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+  HIFI_API_URL: ${HIFI_API_URL:-}
+  TIDAL_MOCK: ${TIDAL_MOCK:-1}
+  TIDAL_TOKEN_FILE: ${TIDAL_TOKEN_FILE:-}
+  TIDAL_CLIENT_ID: ${TIDAL_CLIENT_ID:-}
+  TIDAL_CLIENT_SECRET: ${TIDAL_CLIENT_SECRET:-}
+  TIDAL_REFRESH_TOKEN: ${TIDAL_REFRESH_TOKEN:-}
+  TIDAL_COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
+  ALLOW_DOWNLOADS: ${ALLOW_DOWNLOADS:-0}
+
+services:
+  web:
+    build:
+      context: .
+      args: { SERVICE: web, SERVICE_PORT: 8000 }
+    ports: ["8000:8000"]
+    environment: *common_env
+    depends_on:
+      identity: { condition: service_healthy }
+      fileimport: { condition: service_healthy }
+      playlist: { condition: service_healthy }
+      catalog: { condition: service_healthy }
+      bpm-match: { condition: service_healthy }
+      library: { condition: service_healthy }
+      report: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  identity:
+    build: { context: ., args: { SERVICE: identity, SERVICE_PORT: 8101 } }
+    environment: *common_env
+    volumes: [identity_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8101/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  fileimport:
+    build: { context: ., args: { SERVICE: fileimport, SERVICE_PORT: 8102 } }
+    environment: *common_env
+    volumes: [fileimport_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8102/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  playlist:
+    build: { context: ., args: { SERVICE: playlist, SERVICE_PORT: 8103 } }
+    environment: *common_env
+    volumes: [playlist_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8103/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  catalog:
+    build: { context: ., args: { SERVICE: catalog, SERVICE_PORT: 8104 } }
+    ports: ["8104:8104"]
+    environment: *common_env
+    volumes: [catalog_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8104/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  bpm-match:
+    build: { context: ., args: { SERVICE: bpm-match, SERVICE_PORT: 8105 } }
+    environment: *common_env
+    volumes: [bpm_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8105/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  library:
+    build: { context: ., args: { SERVICE: library, SERVICE_PORT: 8106 } }
+    environment:
+      <<: *common_env
+      DOWNLOAD_DIR: /downloads
+    volumes:
+      - library_data:/data
+      - library_downloads:/downloads
+    depends_on:
+      catalog: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8106/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  report:
+    build: { context: ., args: { SERVICE: report, SERVICE_PORT: 8107 } }
+    ports: ["8107:8107"]
+    environment: *common_env
+    volumes: [report_data:/data]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8107/health', timeout=3).status==200 else 1)"], interval: 30s, timeout: 5s, retries: 3 }
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports: ["9090:9090"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      web: { condition: service_healthy }
+      catalog: { condition: service_healthy }
+      report: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Grafana opcional: `docker compose --profile grafana up -d`
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["grafana"]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+    depends_on:
+      prometheus: { condition: service_started }
+
+volumes:
+  identity_data:
+  fileimport_data:
+  playlist_data:
+  catalog_data:
+  bpm_data:
+  library_data:
+  library_downloads:
+  report_data:

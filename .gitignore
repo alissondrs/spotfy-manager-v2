@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+coverage/
+.pytest_cache/
+
+# Ambiente e segredos (sempre ignorados; NUNCA versionar)
+.env
+.env.local
+.env.*
+!.env.example
+
+# Dados locais e artefatos gerados
+.cache
+.cache/
+data/
+downloads/
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+logs/
+
+# Ferramentas / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Plans e índices do workspace (gerados fora do projeto)
+*.plan.md
