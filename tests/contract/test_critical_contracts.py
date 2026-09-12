@@ -6,7 +6,6 @@ import json
 
 import jwt
 import pytest
-
 from spotfy_contracts import auth, errors
 from spotfy_contracts.files import MAX_UPLOAD_BYTES, parse_import_content, validate_upload
 from spotfy_contracts.ids import (
@@ -15,7 +14,6 @@ from spotfy_contracts.ids import (
     title_matches,
 )
 from spotfy_contracts.store import JsonStore, SqliteStore
-
 
 STRONG_SECRET = "qa-secret-long-enough-1234567890-abcdefghijklmnopqrstuvwxyz"
 

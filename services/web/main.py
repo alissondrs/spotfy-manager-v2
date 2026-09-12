@@ -9,12 +9,11 @@ import uuid
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-
-from spotfy_contracts.auth import current_username_from_header, decode_token
+from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
-from spotfy_contracts.service import BaseConfig, setup_logging, _ACTIVE_SERVICE  # noqa: F401
+from spotfy_contracts.service import _ACTIVE_SERVICE, BaseConfig, setup_logging  # noqa: F401
 from spotfy_contracts.store import SqliteStore
 
 cfg = BaseConfig("web")

@@ -3,9 +3,8 @@ seleção de qualidade, download com tagging e status/erros rastreáveis."""
 
 from __future__ import annotations
 
-import os
-import re
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,7 +13,6 @@ from difflib import SequenceMatcher
 import httpx
 from fastapi import Depends, Header
 from pydantic import BaseModel
-
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
 from spotfy_contracts.ids import normalize_text, sanitize_filename, strip_parenthesized

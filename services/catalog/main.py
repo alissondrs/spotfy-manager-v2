@@ -6,13 +6,11 @@ from __future__ import annotations
 import base64
 import json
 import os
-import time
 from typing import Optional
 
 import httpx
 from fastapi import Depends, Header
 from fastapi.responses import Response
-
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
 from spotfy_contracts.ids import (

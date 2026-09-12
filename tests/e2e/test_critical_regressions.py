@@ -6,9 +6,7 @@ import sys
 
 import httpx
 import pytest
-
 from spotfy_contracts.schemas import Decision, TrackCandidate, TrackInput
-
 from test_flow import PASS, _auth_headers, _auth_token, _url, _wait_job
 
 

@@ -5,15 +5,13 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import Depends, Header, Query
+from fastapi import Depends, Header
 from pydantic import BaseModel
-
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
 from spotfy_contracts.ids import (
     detect_reference_source,
     parse_spotify_reference,
-    sanitize_filename,
 )
 from spotfy_contracts.schemas import TrackInput, utcnow_iso
 from spotfy_contracts.service import build_app

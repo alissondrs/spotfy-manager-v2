@@ -5,7 +5,6 @@ bootstrap de serviço usados por todos os microsserviços. Não contém regra de
 domínio específica (matching, download, relatórios ficam nos serviços).
 """
 
-from .errors import DomainError, ERROR_CATALOG, raise_error, to_error_dict
 from .auth import (
     create_token,
     current_username_from_header,
@@ -14,6 +13,16 @@ from .auth import (
     new_id,
     now_iso,
     verify_password,
+)
+from .errors import ERROR_CATALOG, DomainError, raise_error, to_error_dict
+from .files import (
+    ALLOWED_EXTENSIONS,
+    MAX_UPLOAD_BYTES,
+    parse_csv_playlist,
+    parse_import_content,
+    parse_json_playlist,
+    parse_playlist_markdown,
+    validate_upload,
 )
 from .ids import (
     artist_matches,
@@ -28,16 +37,6 @@ from .ids import (
     strip_parenthesized,
     title_matches,
 )
-from .files import (
-    ALLOWED_EXTENSIONS,
-    MAX_UPLOAD_BYTES,
-    parse_import_content,
-    parse_playlist_markdown,
-    parse_csv_playlist,
-    parse_json_playlist,
-    validate_upload,
-)
-from .store import JsonStore, SqliteStore
 from .schemas import (
     Analysis,
     Decision,
@@ -58,6 +57,7 @@ from .schemas import (
     utcnow_iso,
 )
 from .service import BaseConfig, build_app, get_config, setup_logging
+from .store import JsonStore, SqliteStore
 
 __all__ = [
     "DomainError", "ERROR_CATALOG", "raise_error", "to_error_dict",

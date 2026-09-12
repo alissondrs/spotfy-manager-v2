@@ -7,18 +7,16 @@ import csv
 import html
 import io
 import os
-import re
 from typing import Optional
 
 import httpx
 from fastapi import Depends, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
-from spotfy_contracts.ids import duration_label, sanitize_filename
-from spotfy_contracts.schemas import Decision, ReportFile, utcnow_iso
+from spotfy_contracts.ids import sanitize_filename
+from spotfy_contracts.schemas import Decision, utcnow_iso
 from spotfy_contracts.service import build_app
 from spotfy_contracts.store import SqliteStore
 

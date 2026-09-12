@@ -9,7 +9,6 @@ from typing import Optional
 import httpx
 from fastapi import Depends, Header
 from pydantic import BaseModel, Field
-
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
 from spotfy_contracts.ids import artist_matches, detect_version, parse_source_reference, title_matches
@@ -216,7 +215,6 @@ def _decide(track: TrackInput,
         scored.append((t, a, s, cand))
 
     bpm_present = [x for x in scored if x[2] is not None]
-    bpm_absent = [x for x in scored if x[2] is None]
 
     divergences = _find_divergences(track, candidates)
     result.divergences = divergences

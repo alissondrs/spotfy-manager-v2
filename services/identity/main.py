@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import os
 
+from fastapi import Depends, Header
 from spotfy_contracts.auth import (
     create_token,
     current_username_from_header,
     hash_password,
-    new_id,
     now_iso,
     verify_password,
 )
-from fastapi import Depends, Header
 from spotfy_contracts.errors import raise_error
 from spotfy_contracts.schemas import TokenResponse, UserCreate, UserLogin, UserPublic
 from spotfy_contracts.service import build_app

@@ -8,7 +8,7 @@ import hmac
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 from uuid import uuid4
 
 from .errors import raise_error

@@ -87,7 +87,7 @@ jobs:
         run: |
           python -m compileall -q contracts services
           pip install -q ruff
-          ruff check contracts services
+          ruff check --output-format=concise contracts services
 
   pip-audit:
     name: pip-audit
@@ -109,7 +109,8 @@ jobs:
       - name: Auditoria de dependências (pip-audit)
         run: |
           pip install -q pip-audit
-          pip-audit -r <(cat services/*/requirements.txt | sort -u)
+          cat services/*/requirements.txt | sort -u > /tmp/reqs.txt
+          pip-audit -r /tmp/reqs.txt
 
   compose-validate:
     name: compose-validate

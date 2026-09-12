@@ -7,10 +7,9 @@ import os
 import uuid
 
 from fastapi import Depends, File, Header, UploadFile
-
 from spotfy_contracts.auth import current_username_from_header
 from spotfy_contracts.errors import raise_error
-from spotfy_contracts.files import MAX_UPLOAD_BYTES, parse_import_content, validate_upload
+from spotfy_contracts.files import parse_import_content, validate_upload
 from spotfy_contracts.schemas import TrackInput, utcnow_iso
 from spotfy_contracts.service import build_app
 from spotfy_contracts.store import SqliteStore
