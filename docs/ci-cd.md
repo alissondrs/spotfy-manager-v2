@@ -41,10 +41,16 @@ Não existe publicação de produção diretamente de branch de feature.
 
 ## Branches
 
-- `main` — produção. Protegida: PR vindo de `develop`, CI obrigatório, sem
-  force push, sem deleção.
-- `develop` — integração/validação. Protegida: PR obrigatório, CI obrigatório,
-  resolução de conversas, sem force push, sem deleção.
+- `main` — produção. Protegida: PR vindo de `develop` (convenção), CI
+  obrigatório (14 checks), sem force push, sem deleção.
+- `develop` — integração/validação. Protegida: PR obrigatório, CI obrigatório
+  (14 checks), sem force push, sem deleção.
+
+Nota: a proteção foi aplicada via API de branch protection; em repositórios
+privados no plano GitHub Free ela exige o GitHub Pro. Para este projeto o
+repositório está **público** justamente para permitir a proteção sem custo.
+Se algum dia o repo voltar a ser privado, a proteção é desativada pelo GitHub —
+será necessário o Pro ou a reaplicação via regras.
 
 Nomes de jobs exigidos na proteção de branches (estáveis):
 
