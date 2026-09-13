@@ -544,6 +544,77 @@ class TestBootstrapDocsRequireDefaultBranch:
 
 
 # ========================================================================
+# Autorização (4º commit): push + PR draft automático após PASS local
+# ========================================================================
+#
+# O usuário autorizou: ao concluir o pipeline multiagente/local com revisão
+# PASS, testes obrigatórios verdes, branch `pre-develop/*` válida e worktree
+# limpa, o orquestrador faz push e abre/atualiza a PR **draft** para develop
+# ANTES do GitHub CI (o ci.yml dispara em `pull_request`), passando a
+# acompanhar o CI. Nada de ready/auto-merge/merge automático; qualquer check
+# falho/skipped/cancelled/ausente/inconclusivo mantém a PR draft e bloqueada.
+# Estes testes documentais garantem que AGENTS.md e docs/ci-cd.md registram o
+# fluxo e as restrições.
+
+
+class TestAutoDraftPRDocs:
+    def test_agents_mentions_automatic_draft_pr(self):
+        text = _doc_text(AGENTS_PATH)
+        assert "**Abertura automática de PR draft (autorização)**" in text
+        assert "draft" in text
+
+    def test_agents_gates_before_push(self):
+        text = _doc_text(AGENTS_PATH)
+        for gate in (
+            "**revisão PASS**",
+            "**testes obrigatórios verdes**",
+            "`pre-develop/*` válida",
+            "**worktree limpa**",
+        ):
+            assert gate in text
+
+    def test_agents_pr_opened_before_github_ci(self):
+        text = _doc_text(AGENTS_PATH)
+        assert "**antes**" in text
+        assert "acionado por `pull_request`" in text
+        assert "acompanha o CI" in text
+
+    def test_agents_no_ready_auto_merge_merge(self):
+        text = _doc_text(AGENTS_PATH)
+        assert "marcar `ready`" in text
+        assert "auto-merge" in text
+        assert "mergear automaticamente" in text
+
+    def test_agents_failure_states_keep_draft_blocked(self):
+        text = _doc_text(AGENTS_PATH)
+        assert "falha, skipped, cancelled, ausentes ou" in text
+        assert "inconclusivos" in text
+        assert "draft e bloqueada" in text
+
+    def test_ci_cd_authorized_section_exists(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "### Abertura automática de PR draft (autorização)" in text
+
+    def test_ci_cd_pr_before_ci_reason_and_monitoring(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "antes" in text
+        assert "acionado por" in text
+        assert "`pull_request`" in text
+        assert "acompanha o CI" in text
+
+    def test_ci_cd_no_ready_auto_merge_merge(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "`ready`" in text
+        assert "auto-merge" in text
+        assert "mergear automaticamente" in text
+
+    def test_ci_cd_failure_states_keep_draft_blocked(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "falha, skipped, cancelled, ausente ou inconclusivo" in text
+        assert "draft e bloqueada" in text
+
+
+# ========================================================================
 # CLI do validador
 # ========================================================================
 

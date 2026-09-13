@@ -59,3 +59,14 @@ fluxo autorizado; (3) PR piloto `pre-develop/*`→`develop` verde; (4) só entã
 adicionar o check aos required checks de `develop`/`main`. `docs/ci-cd.md`,
 `AGENTS.md`, comentário do workflow, artefatos `.ai-workflow/*` e teste de
 documentação refletem isso. Nenhuma ação remota; código de produção intocado.
+
+## Atualização corretiva (4º commit) — autorização de push + PR draft automático
+
+Nova autorização do usuário acrescentada à documentação e aos testes: ao concluir
+o pipeline multiagente/local com **revisão PASS**, **testes obrigatórios verdes**,
+**branch `pre-develop/*` válida** e **worktree limpa**, o orquestrador **faz push**
+e **abre/atualiza a PR draft para `develop`** **antes** do GitHub CI (o `ci.yml`
+dispara em `pull_request`) e depois **acompanha o CI**. Nada de `ready`, auto-merge
+ou merge automático; falha/skipped/cancelled/ausência/inconclusivos mantêm a PR em
+**draft e bloqueada**. Alteração documental + testes da política; sem ações remotas
+e sem código de produção.

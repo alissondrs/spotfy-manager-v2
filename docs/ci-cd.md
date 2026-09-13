@@ -10,7 +10,8 @@ deploy via Harness no ambiente lab.
 origin/develop
    ↓ worktree isolada (git worktree add)
 pre-develop/*            ← toda mudança começa aqui
-   ↓ PR para develop
+   ↑ push + abertura/atualização automática de PR DRAFT (após PASS local)
+   ↓ PR draft para develop (aberta ANTES do ci.yml, que dispara em pull_request)
 develop
    ├─ pr-policy (head pre-develop/*; sem elevação de privilégios)
    ├─ testes de contratos e E2E
@@ -28,10 +29,37 @@ main
 Dois movimentos principais:
 
 1. `pre-develop/* → develop` — PR para develop **exige head `pre-develop/*`**
-   (verificado pelo check `pr-policy`). PR criado em **draft** e mantido draft até
-   o CI verde; só então promovido para revisão. Integração e validação no lab.
+   (verificado pelo check `pr-policy`). Com a autorização do usuário, ao concluir
+   o pipeline multiagente/local com **revisão PASS**, **testes obrigatórios
+   verdes**, **branch `pre-develop/*` válida** e **worktree limpa**, o orquestrador
+   **faz push** da branch e **abre/atualiza a PR draft para `develop`** — sempre
+   **draft**, mantido draft até o CI verde; só então promovido para revisão.
+   Integração e validação no lab.
 2. `develop → main` — promoção para produção. PR para main **só pode vir de
    `develop`** (verificado pelo mesmo `pr-policy`).
+
+### Abertura automática de PR draft (autorização)
+
+Quando o pipeline multiagente/local conclui com **revisão PASS**, **testes
+obrigatórios verdes**, **branch `pre-develop/*` válida** e **worktree limpa**, o
+orquestrador está autorizado a:
+
+1. **fazer push** da branch `pre-develop/*`;
+2. **abrir** uma PR **draft** para `develop` (ou **atualizá-la** se já existir).
+
+A PR é aberta **antes** de o GitHub CI executar: o `ci.yml` atual é acionado por
+`pull_request` — só o push de branch, sem PR, não dispara o CI. Depois da abertura,
+o orquestrador **acompanha o CI** (checks obrigatórios: `ci.yml` + `pr-policy`).
+
+O que **não** é autorizado nesta etapa:
+
+- **marcar a PR como `ready`** (fora de draft) prematuramente;
+- **habilitar auto-merge**;
+- **mergear automaticamente**.
+
+A PR permanece **draft e bloqueada** sempre que qualquer check obrigatório estiver
+em **falha, skipped, cancelled, ausente ou inconclusivo**. A promoção para
+`ready`/revisão só ocorre com todos os checks verdes.
 
 Regras de merge:
 - PR em draft não deve ser mergeado (esperar CI obrigatório verde).
@@ -66,7 +94,9 @@ Regras de merge:
   git worktree add -b pre-develop/<assunto> <caminho> origin/develop
   ```
 
-  O PR para develop é aberto em **draft** e segue draft até todos os checks
+  O PR para develop é **aberto automaticamente em `draft`** pelo orquestrador
+  quando o pipeline local conclui com revisão **PASS** (testes obrigatórios verdes,
+  branch `pre-develop/*` válida e worktree limpa), e segue draft até todos os checks
   obrigatórios estarem verdes; merge apenas com squash e só depois do CI.
 
 ### Política de PRs (check `pr-policy`)

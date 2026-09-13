@@ -1,7 +1,7 @@
 run_id: ci-pr-policy
 created_at: 2026-09-13T15:48:00-03:00
 producer: opencode
-status: implementado, local_only (3 commits) (aguardando push/PR autorizado)
+status: implementado, local_only (4 commits) (autorização de push/PR draft documentada)
 source_refs:
   - skill:pipeline-multiagente-de-engenharia
   - branch:pre-develop/ci-pr-policy
@@ -54,6 +54,18 @@ artefatos `.ai-workflow/*`: merge em `develop` (sem required) → promoção
 verde → só então adicionar `pr-policy` aos required checks de `develop`/`main`.
 Nova suíte de testes garante que a documentação menciona `main`/branch padrão
 antes da ativação. Nenhuma ação remota; código de produção intocado.
+
+## Autorização (4º commit, sem push/PR)
+
+Nova autorização documentada: ao concluir o pipeline multiagente/local com
+**revisão PASS**, **testes obrigatórios verdes**, **branch `pre-develop/*`
+válida** e **worktree limpa**, o orquestrador **faz push** e **abre/atualiza a PR
+draft para `develop`** **antes** do GitHub CI (`ci.yml` dispara em
+`pull_request`) e depois **acompanha o CI**. Sem `ready`, sem auto-merge e sem
+merge automático; checks em falha/skipped/cancelled/ausentes/inconclusivos
+mantêm a PR **draft e bloqueada**. Novos testes documentais
+(`TestAutoDraftPRDocs`) garantem a consistência em `AGENTS.md` e `docs/ci-cd.md`.
+Sem ações remotas; código de produção intocado.
 
 ## Checks preservados
 

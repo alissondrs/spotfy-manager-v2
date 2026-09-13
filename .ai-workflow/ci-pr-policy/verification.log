@@ -141,3 +141,29 @@ Cobre também os testes estruturais do workflow que dependem de PyYAML:
 $ ~/.openclaw/tmp/opencode/pr-policy-venv/bin/python -m pytest scripts/test_pr_policy.py -q
 60 passed in 1.08s
 ```
+
+## 8) Autorização (4º commit) — push + PR draft automático (docs)
+
+Nova autorização do usuário: ao concluir o pipeline multiagente/local com
+**revisão PASS**, **testes obrigatórios verdes**, **branch `pre-develop/*`
+válida** e **worktree limpa**, o orquestrador **faz push** e **abre/atualiza a PR
+draft para `develop`** **antes** do GitHub CI (o `ci.yml` dispara em
+`pull_request`) e depois **acompanha o CI**. Sem `ready`, sem auto-merge e sem
+merge automático; falha/skipped/cancelled/ausência/inconclusivos mantêm a PR em
+**draft e bloqueada**. Alteração documental estrita (sem código de produção):
+
+- `AGENTS.md` — regra "Abertura automática de PR draft (autorização)" + passo 6.
+- `docs/ci-cd.md` — seção "Abertura automática de PR draft (autorização)",
+  diagrama e seção de branches atualizados.
+- `scripts/test_pr_policy.py` — novo grupo `TestAutoDraftPRDocs` (gates, abertura
+  antes do CI, motivo `pull_request`, acompanhamento do CI, proibições e bloqueio
+  por checks não verdes).
+- Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
+
+### 8.1) Suíte policy (venv com pytest; sem PyYAML no repo)
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-policy
+60 passed, 9 skipped in 1.19s
+```
+Regressão: os 51+9 anteriores seguem verdes; +9 novos testes de documentação da
+autorização (`TestAutoDraftPRDocs`).

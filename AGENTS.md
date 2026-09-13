@@ -26,9 +26,17 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
 - **Fluxo pré-develop (obrigatório)**: trabalhar em `pre-develop/*` com **origem em
   `origin/develop`** e **worktree isolada** (`git worktree add -b pre-develop/<assunto>`
   a partir de `origin/develop`). Não commitar direto em `develop`.
-- **PR draft + CI obrigatório**: o PR para `develop` deve ser aberto em **draft** e
-  permanecer draft até todos os checks obrigatórios (`ci.yml` + `pr-policy`) estarem
-  verdes.
+- **PR draft + CI obrigatório**: o PR para `develop` é aberto em **draft** e
+  permanece draft até todos os checks obrigatórios (`ci.yml` + `pr-policy`) estarem
+  verdes. Com a autorização abaixo, a abertura é automática.
+- **Abertura automática de PR draft (autorização)**: ao concluir o pipeline
+  multiagente/local com **revisão PASS**, **testes obrigatórios verdes**,
+  **branch `pre-develop/*` válida** e **worktree limpa**, o orquestrador
+  **faz push** da branch e **abre/atualiza a PR draft para `develop`**. A PR é
+  aberta **antes** do GitHub CI (o `ci.yml` atual é acionado por `pull_request`);
+  depois o orquestrador **acompanha o CI**. Nunca marcar `ready`, nunca habilitar
+  auto-merge e nunca mergear automaticamente. Checks em **falha, skipped, cancelled, ausentes ou
+  inconclusivos** mantêm a PR em **draft e bloqueada**.
 - **Squash e auto-merge só após checks**: merge via **squash**; **auto-merge apenas
   depois dos checks verdes** — nunca habilitar auto-merge que ignore checks.
 - **Política de PRs**: PR para `develop` exige head `pre-develop/*`; PR para `main`
@@ -48,6 +56,10 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
 3. Valide: `make test-contract`, `make test-e2e` e `make test-policy` (política pr-policy).
 4. Garanta `/health` e `/metrics` e logs úteis nos serviços afetados.
 5. Atualize documentação e, se mudar env/portas, o `.env.example`.
+6. Com revisão local **PASS** (testes obrigatórios verdes, branch `pre-develop/*`
+   válida, worktree limpa): faça push e **abra/atualize a PR draft para `develop`**
+   antes do GitHub CI; depois **acompanhe o CI**. Não marcar `ready`, não habilitar
+   auto-merge e não mergear automaticamente.
 
 ## Comandos úteis
 

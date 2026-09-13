@@ -101,3 +101,26 @@ Ajustes de documento/comentário/teste (nenhum código de produção):
 - `scripts/test_pr_policy.py` — novo grupo de testes verifica que `docs/ci-cd.md`
   menciona `main`/branch padrão e a ordem do rollout antes da ativação.
 - Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
+
+## Revisão de autorização (4º commit — estritamente local, sem push/PR)
+
+Nova autorização do usuário refletida na documentação e nos testes da política.
+O orquestrador **faz push** e **abre/atualiza a PR draft para `develop`** quando o
+pipeline multiagente/local conclui com **revisão PASS**, **testes obrigatórios
+verdes**, **branch `pre-develop/*` válida** e **worktree limpa** — a PR é aberta
+**antes** do GitHub CI (o `ci.yml` atual é acionado por `pull_request`) e depois o
+orquestrador **acompanha o CI**. Não marcar `ready`, não habilitar auto-merge e
+não mergear automaticamente; falha, skipped, cancelled, ausência ou checks
+inconclusivos mantêm a PR **draft e bloqueada**. Ajustes:
+
+- `AGENTS.md` — nova regra "Abertura automática de PR draft (autorização)" e passo
+  6 no fluxo de trabalho.
+- `docs/ci-cd.md` — seção "Abertura automática de PR draft (autorização)" no fluxo,
+  diagrama e seção de branches atualizados.
+- `scripts/test_pr_policy.py` — novo grupo `TestAutoDraftPRDocs` garante que a
+  documentação registra gates, abertura antes do CI (motivo `pull_request`),
+  acompanhamento do CI, proibições (ready/auto-merge/merge) e bloqueio por checks
+  falhos/skipped/cancelled/ausentes/inconclusivos.
+- Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
+
+Nenhum código de produção foi alterado; nenhuma ação remota (push/PR/auto-merge).

@@ -69,3 +69,16 @@ confirmando o check verde; (4) só então adicionar `pr-policy` aos required
 checks de `develop` e `main`. `docs/ci-cd.md`, `AGENTS.md`, comentário do
 workflow e artefatos `.ai-workflow/*` atualizados; teste novo garante que a
 documentação menciona `main`/branch padrão antes da ativação.
+
+## Nota corretiva (4º commit) — autorização de push + PR draft automático
+
+O usuário autorizou que, ao concluir o pipeline multiagente/local com **revisão
+PASS**, **testes obrigatórios verdes**, **branch `pre-develop/*` válida** e
+**worktree limpa**, o orquestrador pode **fazer push** da branch e **abrir ou
+atualizar a PR draft para `develop`** — **antes** do GitHub CI (o `ci.yml` atual
+é acionado por `pull_request`) e depois **acompanhar o CI**. Não marcar `ready`,
+não habilitar auto-merge e não mergear automaticamente; falha, skipped,
+cancelled, ausência ou checks inconclusivos mantêm a PR **draft e bloqueada**.
+Alteração estritamente documental (`AGENTS.md`, `docs/ci-cd.md`, artefatos
+`.ai-workflow/*`) + testes da política; nenhuma ação remota nem código de
+produção.
