@@ -1,0 +1,40 @@
+name: pr-policy
+
+# Check estável que governa a topologia de PRs pré-desenvolvimento.
+# Regras declaradas em .github/pr-policy.yml (ver scripts/validate_pr_policy.py).
+#
+# Segurança: roda em `pull_request` (evento sem privilégios elevados), com token
+# `contents: read` apenas (sem gravação, sem secrets elevados). O job valida
+# somente os nomes de branch GitHub (head/base) e falha fechado.
+# Não rename o job `pr-policy`: é required check na proteção de branches.
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: pr-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-policy:
+    name: pr-policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validar head/base contra pr-policy.yml
+        env:
+          PR_HEAD: ${{ github.head_ref }}
+          PR_BASE: ${{ github.base_ref }}
+        run: python3 scripts/validate_pr_policy.py
+
+      - name: Autoteste do validador (parser + casos válidos/inválidos)
+        run: |
+          python3 -m pip install --quiet pytest
+          python3 -m pytest scripts/test_pr_policy.py -p no:cacheprovider -q

@@ -1,0 +1,48 @@
+# Verification — pr-policy (2026-09-13)
+
+## Ambiente
+Python 3.14.3
+pytest 9.1.1 | PyYAML 6.0.3
+
+## 1) make test-policy equivalente - com PyYAML disponível
+............................................                             [100%]
+44 passed in 0.04s
+
+## 2) Ambiente limpo sem PyYAML (parser mínimo, stdlib apenas)
+............................sssssss.........                             [100%]
+37 passed, 7 skipped in 0.02s
+
+## 3) CLI repositório - casos válidos/inválidos (stdlib)
+[pr-policy] ok: pre-develop/ci-pr-policy -> develop (integração em develop só via fluxo pré-develop (PR prévia a partir de pre-develop/*))
+rc=0
+[pr-policy] inaprovado: head='feature/x' para base='develop'; esperado: pre-develop/*
+rc=1
+[pr-policy] ok: develop -> main (produção só recebe promoção a partir de develop)
+rc=0
+[pr-policy] inaprovado: head='feature/x' para base='main'; esperado: develop
+rc=1
+[pr-policy] inaprovado: head='pre-develop/x' para base='main'; esperado: develop
+rc=1
+[pr-policy] inaprovado: head='main' para base='main'; esperado: develop
+rc=1
+   (exit: 0=ok, 1=inaprovado, 2=erro de política/ambiente)
+
+## 4) Parsing YAML dos arquivos reais
+workflow top keys: ['True', 'concurrency', 'jobs', 'name', 'permissions']
+policy rules: [{'base': 'develop', 'head_pattern': 'pre-develop/*', 'reason': 'integração em develop só via fluxo pré-develop (PR prévia a partir de pre-develop/*)'}, {'base': 'main', 'head_exact': 'develop', 'reason': 'produção só recebe promoção a partir de develop'}]
+
+## 5) Notebook de falhas encontradas e corrigidas
+- Parser rejeitava a linha `rules:` (chave de topo sem valor). Corrigido:
+  `rules:` inicia a seção; chaves de topo desconhecidas passam a falhar.
+- `version` não era lido; passou a ser parseado como int e validado no load.
+- Regras sem `base`/`reason`/`head` só eram rejeitadas em `load_policy`; os
+  testes de "regra inválida" passaram a exercer `load_policy` (fail-closed) via
+  `tmp_path`.
+- PyYAML interpreta a chave `on` como bool (YAML 1.1); testes do workflow usam
+  o helper `_workflow_on` para aceitar `on`/`True`.
+- Guard textual do workflow falhava porque o comentário lia o nome do evento com
+  privilégios elevados; comentário reescrito e teste ajustado.
+- `monkeypatch.setdelattr` não existe no pytest; trocado por
+  `monkeypatch.delenv("PR_POLICY_FILE", raising=False)`.
+
+Resultado final: 44 passed (com PyYAML) / 37 passed + 7 skipped (stdlib only).

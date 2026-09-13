@@ -7,15 +7,18 @@ deploy via Harness no ambiente lab.
 ## Fluxo
 
 ```text
-feature/*
-   ↓ PR
+origin/develop
+   ↓ worktree isolada (git worktree add)
+pre-develop/*            ← toda mudança começa aqui
+   ↓ PR para develop
 develop
+   ├─ pr-policy (head pre-develop/*; sem elevação de privilégios)
    ├─ testes de contratos e E2E
    ├─ lint e auditoria
    ├─ build das 8 imagens
    ├─ publicação das imagens develop-*
    └─ deploy no ambiente lab via Harness
-          ↓ PR
+          ↓ PR (apenas de develop)
 main
    ├─ CI completo
    ├─ publicação das imagens prod-*
@@ -24,10 +27,17 @@ main
 
 Dois movimentos principais:
 
-1. `feature/* → develop` — integração e validação no ambiente lab.
-2. `develop → main` — promoção para produção.
+1. `pre-develop/* → develop` — PR para develop **exige head `pre-develop/*`**
+   (verificado pelo check `pr-policy`). PR criado em **draft** e mantido draft até
+   o CI verde; só então promovido para revisão. Integração e validação no lab.
+2. `develop → main` — promoção para produção. PR para main **só pode vir de
+   `develop`** (verificado pelo mesmo `pr-policy`).
 
-Não existe publicação de produção diretamente de branch de feature.
+Regras de merge:
+- PR em draft não deve ser mergeado (esperar CI obrigatório verde).
+- Merge com **squash**; **auto-merge não deve ser habilitado antes de todos os
+  checks obrigatórios passarem** (nunca "auto-merge regardless of checks").
+- Não existe publicação de produção diretamente de branch de feature.
 
 ## Arquivos
 
@@ -35,16 +45,50 @@ Não existe publicação de produção diretamente de branch de feature.
 |---------|-------|
 | `ci-project.yaml` | contrato de configuração (fonte de verdade) |
 | `.github/workflows/ci.yml` | CI em PRs e pushes (develop/main) |
+| `.github/workflows/pr-policy.yml` | check `pr-policy`: valida head/base de PRs |
+| `.github/pr-policy.yml` | regras da política pré-develop (fonte das regras) |
+| `scripts/validate_pr_policy.py` | validador local da política (stdlib, sem deps novas) |
+| `scripts/test_pr_policy.py` | testes do parser e da política (casos válidos/inválidos) |
 | `.github/workflows/build-publish.yml` | build + publicação de imagens após merge |
 | `deploy/compose/docker-compose.deploy.yml` | compose de deploy (sem build, usa imagens publicadas) |
 | `deploy/harness/README.md` | guia de deploy via Harness no lab |
 
 ## Branches
 
-- `main` — produção. Protegida: PR vindo de `develop` (convenção), CI
-  obrigatório (14 checks), sem force push, sem deleção.
+- `main` — produção. Protegida: PR vindo de `develop` (regra), CI obrigatório
+  (14 checks), sem force push, sem deleção.
 - `develop` — integração/validação. Protegida: PR obrigatório, CI obrigatório
   (14 checks), sem force push, sem deleção.
+- `pre-develop/*` — fluxo pré-desenvolvimento. Criado com **origem em
+  `origin/develop`** e **worktree isolada** (nunca commits diretos em develop):
+
+  ```bash
+  git worktree add -b pre-develop/<assunto> <caminho> origin/develop
+  ```
+
+  O PR para develop é aberto em **draft** e segue draft até todos os checks
+  obrigatórios estarem verdes; merge apenas com squash e só depois do CI.
+
+### Política de PRs (check `pr-policy`)
+
+Regras declaradas em `.github/pr-policy.yml` e aplicadas pelo workflow
+`.github/workflows/pr-policy.yml` em qualquer PR apontando para `develop`/`main`:
+
+| base   | head exigido       |
+|--------|--------------------|
+| develop| `pre-develop/*`    |
+| main   | `develop`          |
+
+O check é **fail-closed**: política ausente, malformada ou sem regra para a base
+do PR faz o check falhar. Roda em `pull_request` com `permissions: contents: read`
+(não usa o evento de privilégios elevados, não grava nada e não acessa secrets).
+
+Validação local (sem dependências novas):
+
+```bash
+make test-policy
+python3 scripts/validate_pr_policy.py --head pre-develop/x --base develop
+```
 
 Nota: a proteção foi aplicada via API de branch protection; em repositórios
 privados no plano GitHub Free ela exige o GitHub Pro. Para este projeto o
@@ -52,7 +96,7 @@ repositório está **público** justamente para permitir a proteção sem custo.
 Se algum dia o repo voltar a ser privado, a proteção é desativada pelo GitHub —
 será necessário o Pro ou a reaplicação via regras.
 
-Nomes de jobs exigidos na proteção de branches (estáveis):
+Nomes de jobs exigidos na proteção de branches (estáveis — **não renomear**):
 
 - `test-contract`
 - `test-e2e`
@@ -61,6 +105,9 @@ Nomes de jobs exigidos na proteção de branches (estáveis):
 - `compose-validate`
 - `secret-scan`
 - `docker-build-<serviço>` para cada um dos 8 serviços
+
+Além desses 14, o check `pr-policy` (workflow próprio) deve ser adicionado à
+lista de required checks de `develop` e `main`.
 
 ## CI (ci.yml)
 
@@ -82,6 +129,18 @@ Build por serviço:
 ```bash
 docker build --build-arg SERVICE=<serviço> --build-arg SERVICE_PORT=<porta> .
 ```
+
+## pr-policy (pr-policy.yml)
+
+Workflow próprio e estável, roda em `pull_request` (branches `develop`/`main`):
+
+1. `actions/checkout` com `fetch-depth: 1` (sem histórico, sem passo de produção);
+2. executa `scripts/validate_pr_policy.py` com `PR_HEAD`/`PR_BASE` do evento —
+   valida apenas nomes de branch, sem executar aplicação e sem secrets;
+3. autoteste (`pytest scripts/test_pr_policy.py`) para garantir parser/regras.
+
+`permissions: contents: read` apenas; sem `pull-requests: write`, sem comentários
+automáticos. Falha fechado: à menor anomalia o check falha e bloqueia o merge.
 
 ## Publicação (build-publish.yml)
 

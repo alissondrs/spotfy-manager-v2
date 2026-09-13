@@ -4,7 +4,7 @@ PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 SERVICES := identity fileimport playlist catalog bpm-match library report web
 
-.PHONY: help setup venv contracts requirements run-web up down logs build test test-contract test-e2e lint clean run-%
+.PHONY: help setup venv contracts requirements run-web up down logs build test test-contract test-e2e test-policy lint clean run-%
 
 help: ## Lista de comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -42,13 +42,16 @@ down: ## Derruba o stack
 logs: ## Logs do stack
 	docker compose logs -f
 
-test: test-contract test-e2e ## Roda todos os testes
+test: test-contract test-e2e test-policy ## Roda todos os testes
 
 test-contract: ## Testes unitários dos contratos
 	$(PY) -m pytest tests/contract -x -q
 
 test-e2e: ## Testes ponta a ponta (fluxo completo)
 	$(PY) -m pytest tests/e2e -x -q
+
+test-policy: ## Testes da política pr-policy (parser + casos válidos/inválidos)
+	$(PY) -m pytest scripts/test_pr_policy.py -q
 
 lint: ## Verificação sintática mínima
 	$(PY) -m compileall -q contracts services

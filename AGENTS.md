@@ -23,12 +23,23 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
   em código de chamada.
 - Manter local simples e rastreável; evitar infraestrutura desnecessária.
 - Atualizar `README.md`, `docs/` e `context.md` quando o fluxo mudar.
+- **Fluxo pré-develop (obrigatório)**: trabalhar em `pre-develop/*` com **origem em
+  `origin/develop`** e **worktree isolada** (`git worktree add -b pre-develop/<assunto>`
+  a partir de `origin/develop`). Não commitar direto em `develop`.
+- **PR draft + CI obrigatório**: o PR para `develop` deve ser aberto em **draft** e
+  permanecer draft até todos os checks obrigatórios (`ci.yml` + `pr-policy`) estarem
+  verdes.
+- **Squash e auto-merge só após checks**: merge via **squash**; **auto-merge apenas
+  depois dos checks verdes** — nunca habilitar auto-merge que ignore checks.
+- **Política de PRs**: PR para `develop` exige head `pre-develop/*`; PR para `main`
+  só pode vir de `develop`. Verificado pelo check `pr-policy`
+  (`.github/pr-policy.yml` + `scripts/validate_pr_policy.py`).
 
 ## Fluxo de trabalho
 
 1. Identifique o serviço/contrato alvo antes de editar.
 2. Implemente a menor mudança coerente com o serviço.
-3. Valide: `make test-contract` e `make test-e2e` (fluxo completo).
+3. Valide: `make test-contract`, `make test-e2e` e `make test-policy` (política pr-policy).
 4. Garanta `/health` e `/metrics` e logs úteis nos serviços afetados.
 5. Atualize documentação e, se mudar env/portas, o `.env.example`.
 
@@ -37,6 +48,8 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
 ```bash
 make setup                # venv + contracts + deps
 make run-<serviço>        # ex.: make run-bpm-match
-make test                 # roda tudo
+make test                 # roda tudo (contract + e2e + policy)
+make test-policy          # parser + casos válidos/inválidos da política
 make up / make down       # docker compose
+python3 scripts/validate_pr_policy.py --head <branch> --base <branch>   # valida PR localmente
 ```
