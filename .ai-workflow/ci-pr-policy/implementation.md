@@ -124,3 +124,31 @@ inconclusivos mantêm a PR **draft e bloqueada**. Ajustes:
 - Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
 
 Nenhum código de produção foi alterado; nenhuma ação remota (push/PR/auto-merge).
+
+## Correção do job `pip-audit` (5º commit — estritamente local, sem push/PR)
+
+CI remoto da PR draft #1 (run 34784182136): todos os checks verdes exceto
+`pip-audit`. Causa-raiz: a linha `cat services/*/requirements.txt | sort -u` do
+job concatenava o fim de um requirements.txt sem newline final com o início do
+seguinte — `services/playlist/requirements.txt` termina em `httpx>=0.27` (sem
+`\n`) e `services/report/requirements.txt` começa com `fastapi>=0.115`, gerando
+`httpx>=0.27fastapi>=0.115` (requirement inválido para o `pip-audit`).
+
+Ajustes (nenhum requirements.txt / código de produção alterado):
+
+- `.github/workflows/ci.yml` — job `pip-audit`: `cat services/*/requirements.txt
+  | sort -u > /tmp/reqs.txt` → `awk 1 services/*/requirements.txt | sort -u >
+  /tmp/reqs.txt`. O `awk 1` imprime cada registro com newline (inclusive a última
+  linha sem `\n`), separando corretamente os arquivos antes do `sort -u`. Mudança
+  mínima, sem dependências novas no runner.
+- `scripts/test_ci_pip_audit.py` (novo) — teste regressivo local stdlib+pytest
+  (PyYAML opcional): reproduz o comportamento antigo (`cat` cru → linha fundida),
+  valida o novo (concatenação com newline sobre os arquivos reais do repo produz
+  só requirements bem formados) e garante que o `ci.yml` mantém a separação por
+  newline antes do `sort -u` (guards textuais + parse estrutural com PyYAML
+  quando disponível). Falha ao reverter o comando antigo no `ci.yml`.
+- `Makefile` — novo alvo `test-ci-audit` (roda `scripts/test_ci_pip_audit.py`) e
+  inclusão no `make test`.
+
+Sem novas dependências; sem alterações em requirements/código de produção;
+nenhuma ação remota (push/PR/merge).

@@ -1,7 +1,7 @@
 run_id: ci-pr-policy
 created_at: 2026-09-13T15:48:00-03:00
 producer: opencode
-status: implementado, local_only (4 commits) (autorização de push/PR draft documentada)
+status: implementado, local_only (5 commits) (fix pip-audit após CI remoto 34784182136)
 source_refs:
   - skill:pipeline-multiagente-de-engenharia
   - branch:pre-develop/ci-pr-policy
@@ -66,6 +66,31 @@ merge automático; checks em falha/skipped/cancelled/ausentes/inconclusivos
 mantêm a PR **draft e bloqueada**. Novos testes documentais
 (`TestAutoDraftPRDocs`) garantem a consistência em `AGENTS.md` e `docs/ci-cd.md`.
 Sem ações remotas; código de produção intocado.
+
+## Correção do job `pip-audit` (5º commit, sem push/PR) — CI remoto 34784182136
+
+A PR draft #1 executou o CI e somente o job `pip-audit` falhou (run
+34784182136). Causa-raiz comprovada no log: `cat services/*/requirements.txt |
+sort -u` concatenava o fim de um requirements.txt **sem newline final**
+(`services/playlist/requirements.txt` termina em `httpx>=0.27`) com o início do
+seguinte (`services/report/requirements.txt` começa com `fastapi>=0.115`),
+produzindo a linha inválida `httpx>=0.27fastapi>=0.115` e quebrando o `pip-audit`.
+
+Correção mínima e robusta em `.github/workflows/ci.yml` (job `pip-audit`):
+`cat ... | sort -u` → `awk 1 ... | sort -u` (`awk 1` garante newline por
+registro antes do `sort -u`; portátil p/ GNU awk no runner e o awk do
+macOS/BSD na validação local). Nenhuma alteração em requirements.txt/código de
+produção.
+
+Regressão local adicionada: `scripts/test_ci_pip_audit.py` (stdlib + pytest,
+PyYAML opcional) — falha com o comportamento antigo e valida o novo:
+`TestOldBehaviorIsBroken` reproduz a linha fundida `httpx>=0.27fastapi>=0.115`;
+`TestNewBehaviorIsWellFormed` valida a concatenação com newline sobre os
+arquivos reais; `TestCiPipAuditUsesSafeAssembly`/`...StructureYaml` garantem que
+o `ci.yml` mantém a separação por newline antes do `sort -u`. Novos alvo
+`make test-ci-audit` (incluído no `make test`). Resultados: 9 passed/2 skipped
+sem PyYAML; 11 passed com PyYAML; com o comando antigo (revertido), 4 testes do
+guard falham. Commit local separado; **sem push/PR**.
 
 ## Checks preservados
 
