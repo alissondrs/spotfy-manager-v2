@@ -1,0 +1,91 @@
+name: pr-policy
+
+# Check estável que governa a topologia de PRs pré-desenvolvimento.
+# As regras vivem em .github/pr-policy.yml e são espelhadas aqui em lógica
+# inline; testes locais garantem a consistência entre os dois lados.
+#
+# Segurança: roda em `pull_request_target`, mas o job usa APENAS lógica inline
+# sobre `github.event.pull_request.head.ref` / `base.ref` (nomes de branch do
+# payload do evento). Ele NÃO baixa o repositório, NÃO instala dependências,
+# NÃO executa qualquer arquivo/script do head (não confiável) do PR e o token
+# fica limitado a `permissions: contents: read` (sem gravação, sem credenciais).
+# Fail-closed: head/base ausentes ou base sem regra ⇒ o check falha.
+#
+# Bootstrap (necessário antes de tornar `pr-policy` um required check):
+# `pull_request_target` roda no contexto da BRANCH PADRÃO do repo (aqui, main):
+# o workflow executado é o da branch padrão, não o da base/head do PR. Então o
+# check só passa a existir quando este workflow estiver também em main.
+#   1. merge em develop, sem tornar `pr-policy` required (no primeiro PR o check
+#      ainda não existe e pode nem aparecer; esperado);
+#   2. promova develop -> main pelo fluxo autorizado (workflow agora presente na
+#      branch padrão, e o evento passa a disparar);
+#   3. abra uma PR piloto pre-develop/* -> develop e confirme que o check roda e
+#      fica verde;
+#   4. só então adicione `pr-policy` aos required checks de develop e main.
+# Torná-lo required antes disso deixa todos os PRs bloqueados (check nunca dispara).
+#
+# Não renomeie o job `pr-policy`: é required check na proteção de branches.
+
+on:
+  pull_request_target:
+    branches: [develop, main]
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-policy:
+    name: pr-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar head/base com lógica inline (fail-closed)
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          python3 - "$PR_HEAD" "$PR_BASE" <<'PY'
+          import fnmatch
+          import sys
+
+          # Regras espelhadas de .github/pr-policy.yml. Alterar as regras exige
+          # atualizar os três: policy YAML, o validador local e este
+          # bloco inline (ver test_pr_policy.py, que garante a consistência).
+          RULES = [
+              {"base": "develop", "head_exact": None, "head_pattern": "pre-develop/*"},
+              {"base": "main", "head_exact": "develop", "head_pattern": None},
+          ]
+
+          def allowed(head, base):
+              if not head or not base:
+                  return False
+              matches = [r for r in RULES if r["base"] == base]
+              if not matches:
+                  return False
+              for rule in matches:
+                  if rule["head_exact"] is not None:
+                      if head == rule["head_exact"]:
+                          return True
+                  elif fnmatch.fnmatch(head, rule["head_pattern"]):
+                      return True
+              return False
+
+          def main(argv=None):
+              args = list(sys.argv[1:] if argv is None else argv)
+              if len(args) != 2:
+                  print("uso: pr-policy <head> <base>", file=sys.stderr)
+                  return 2
+              head, base = args
+              passed = allowed(head, base)
+              print(
+                  f"[pr-policy] {'ok' if passed else 'fail-closed'}: "
+                  f"head={head!r} base={base!r}"
+              )
+              return 0 if passed else 1
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY

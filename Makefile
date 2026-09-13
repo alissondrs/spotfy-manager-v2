@@ -1,10 +1,16 @@
 SHELL := /bin/bash
-VENV := .venv
+VENV ?= .venv
+# Worktrees sem .venv local: informe um venv existente com `make VENV=/caminho/da/venv
+# test-policy`; se o venv local não existir, cai para python3 do PATH (ex.: aquele que
+# já tem pytest/PyYAML). Não cria dependências novas para o repo.
 PY := $(VENV)/bin/python
+ifeq ($(wildcard $(PY)),)
+PY := python3
+endif
 PIP := $(VENV)/bin/pip
 SERVICES := identity fileimport playlist catalog bpm-match library report web
 
-.PHONY: help setup venv contracts requirements run-web up down logs build test test-contract test-e2e lint clean run-%
+.PHONY: help setup venv contracts requirements run-web up down logs build test test-contract test-e2e test-policy test-ci-audit lint clean run-%
 
 help: ## Lista de comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -42,13 +48,19 @@ down: ## Derruba o stack
 logs: ## Logs do stack
 	docker compose logs -f
 
-test: test-contract test-e2e ## Roda todos os testes
+test: test-contract test-e2e test-policy test-ci-audit ## Roda todos os testes
 
 test-contract: ## Testes unitários dos contratos
 	$(PY) -m pytest tests/contract -x -q
 
 test-e2e: ## Testes ponta a ponta (fluxo completo)
 	$(PY) -m pytest tests/e2e -x -q
+
+test-policy: ## Testes da política pr-policy (parser + consistência do workflow inline)
+	$(PY) -m pytest scripts/test_pr_policy.py -q
+
+test-ci-audit: ## Testes do job pip-audit do CI (separação por newline antes do sort -u)
+	$(PY) -m pytest scripts/test_ci_pip_audit.py -q
 
 lint: ## Verificação sintática mínima
 	$(PY) -m compileall -q contracts services

@@ -109,7 +109,7 @@ jobs:
       - name: Auditoria de dependências (pip-audit)
         run: |
           pip install -q pip-audit
-          cat services/*/requirements.txt | sort -u > /tmp/reqs.txt
+          awk 1 services/*/requirements.txt | sort -u > /tmp/reqs.txt
           pip-audit -r /tmp/reqs.txt
 
   compose-validate:

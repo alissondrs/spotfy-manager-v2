@@ -1,0 +1,249 @@
+run_id: ci-pr-policy
+created_at: 2026-09-13T15:48:00-03:00
+producer: opencode
+status: passando (revisão corretiva)
+source_refs:
+  - skill:pipeline-multiagente-de-engenharia
+  - branch:pre-develop/ci-pr-policy
+  - base:origin/develop@6ed2d5c09639a86c57c387ed9a7eb077e12798d1
+  - commit:486ee5a5b9be59997a490a211cece3a7731e798b (versão original)
+
+# Verification — pr-policy (2026-09-13)
+
+## Ambiente
+Python 3.14.3
+pytest 9.1.1 | PyYAML 6.0.3
+
+## 1) make test-policy equivalente - com PyYAML disponível
+............................................                             [100%]
+44 passed in 0.04s
+
+## 2) Ambiente limpo sem PyYAML (parser mínimo, stdlib apenas)
+............................sssssss.........                             [100%]
+37 passed, 7 skipped in 0.02s
+
+## 3) CLI repositório - casos válidos/inválidos (stdlib)
+[pr-policy] ok: pre-develop/ci-pr-policy -> develop (integração em develop só via fluxo pré-develop (PR prévia a partir de pre-develop/*))
+rc=0
+[pr-policy] inaprovado: head='feature/x' para base='develop'; esperado: pre-develop/*
+rc=1
+[pr-policy] ok: develop -> main (produção só recebe promoção a partir de develop)
+rc=0
+[pr-policy] inaprovado: head='feature/x' para base='main'; esperado: develop
+rc=1
+[pr-policy] inaprovado: head='pre-develop/x' para base='main'; esperado: develop
+rc=1
+[pr-policy] inaprovado: head='main' para base='main'; esperado: develop
+rc=1
+   (exit: 0=ok, 1=inaprovado, 2=erro de política/ambiente)
+
+## 4) Parsing YAML dos arquivos reais
+workflow top keys: ['True', 'concurrency', 'jobs', 'name', 'permissions']
+policy rules: [{'base': 'develop', 'head_pattern': 'pre-develop/*', 'reason': 'integração em develop só via fluxo pré-develop (PR prévia a partir de pre-develop/*)'}, {'base': 'main', 'head_exact': 'develop', 'reason': 'produção só recebe promoção a partir de develop'}]
+
+## 5) Notebook de falhas encontradas e corrigidas
+- Parser rejeitava a linha `rules:` (chave de topo sem valor). Corrigido:
+  `rules:` inicia a seção; chaves de topo desconhecidas passam a falhar.
+- `version` não era lido; passou a ser parseado como int e validado no load.
+- Regras sem `base`/`reason`/`head` só eram rejeitadas em `load_policy`; os
+  testes de "regra inválida" passaram a exercer `load_policy` (fail-closed) via
+  `tmp_path`.
+- PyYAML interpreta a chave `on` como bool (YAML 1.1); testes do workflow usam
+  o helper `_workflow_on` para aceitar `on`/`True`.
+- Guard textual do workflow falhava porque o comentário lia o nome do evento com
+  privilégios elevados; comentário reescrito e teste ajustado.
+- `monkeypatch.setdelattr` não existe no pytest; trocado por
+  `monkeypatch.delenv("PR_POLICY_FILE", raising=False)`.
+
+Resultado final: 44 passed (com PyYAML) / 37 passed + 7 skipped (stdlib only).
+
+## 6) Revisão corretiva (2º commit) — workflow inline `pull_request_target`
+
+Motivo: o check original usava `pull_request` + `actions/checkout` + rodava
+`scripts/validate_pr_policy.py` e `pytest` **do head do PR** — código não
+confiável executado no runner. Correção:
+
+- workflow reescrito para `pull_request_target` com `permissions: contents: read`,
+  **sem checkout, sem setup-python, sem steps `uses:`, sem pip**; validação em
+  lógica inline sobre `github.event.pull_request.head.ref`/`base.ref`,
+  fail-closed; bootstrap documentado em `docs/ci-cd.md`.
+- `test_pr_policy.py` ganhou: consistência das regras inline vs `pr-policy.yml`,
+  paridade de comportamento por matriz `(head, base)` (subprocesso com o bloco
+  extraído) e garantias de ausência de checkout/pip/execução de código do PR.
+
+### 6.1) Python disponível — venv com pytest (sem PyYAML)
+```
+$ .../.venv/bin/python -m pytest scripts/test_pr_policy.py -q -p no:cacheprovider
+44 passed, 9 skipped in 1.16s
+```
+
+### 6.2) Python disponível — homebrew python3 com PyYAML (sem pytest)
+Cross-check do parse de todos os YAMLs do repo com `yaml.safe_load` (ferramenta
+existente) + `validate_pr_policy.py` via CLI:
+```
+workflows/build-publish.yml, workflows/ci.yml, workflows/pr-policy.yml, pr-policy.yml
+yaml ok (todos parseiam)
+[pr-policy] ok: head='pre-develop/ci-pr-policy' base='develop'   (rc=0)
+[pr-policy] ok: head='develop' base='main'                        (rc=0)
+[pr-policy] inaprovado: head='feature/x' para base='develop'      (rc=1)
+[pr-policy] inaprovado: head='pre-develop/x' para base='main'     (rc=1)
+```
+
+### 6.3) Ambiente combinado (pytest + PyYAML) em venv descartável
+Para exercer também os testes estruturais que dependem de PyYAML, foi criada
+uma venv descartável fora do repo (`~/.openclaw/tmp/opencode`, pytest+yaml):
+```
+53 passed in ~1.3s
+```
+Nenhuma dependência foi adicionada ao repo.
+
+### 6.4) `make VENV=... test-policy` (instrução para worktrees sem .venv)
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-policy
+44 passed, 9 skipped in 1.16s
+```
+
+Notas de regressão: os 44+9 testes anteriores (parser/fail-closed/CLI) seguem
+verdes; os novos testes de consistência/segurança passam nos três ambientes
+acima.
+
+## 7) Revisão corretiva (3º commit) — bootstrap exige a branch padrão (`main`)
+
+Motivo: a documentação oficial do GitHub confirma que `pull_request_target`
+executa **no contexto da branch padrão do repo** (`main` aqui) e usa o workflow
+da branch padrão — mergear só em `develop` não faz o check disparar. Correção
+estritamente local (sem push/PR, sem código de produção):
+
+- `.github/workflows/pr-policy.yml` — comentário de bootstrap com a ordem
+  correta: merge em develop (sem required) → promoção develop→main → PR piloto
+  → required checks.
+- `docs/ci-cd.md` — seção de bootstrap passa a exigir o workflow na **branch
+  padrão `main`** antes da ativação; nota dos required checks atualizada.
+- `AGENTS.md` — política de PRs menciona que `pull_request_target` usa o
+  workflow da branch padrão (`main`).
+- `scripts/test_pr_policy.py` — novo grupo `TestBootstrapDocsRequireDefaultBranch`:
+  garante que `docs/ci-cd.md` menciona `main`/branch padrão no bootstrap, que
+  `pull_request_target` está ligado à branch padrão e que a ordem do rollout é
+  develop → main → PR piloto → required checks; também cobre `AGENTS.md` e o
+  comentário do workflow.
+- Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
+
+### 7.1) Suíte policy (venv com pytest; sem PyYAML no repo)
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-policy
+51 passed, 9 skipped in 1.19s
+```
+Regressão: 44+9 anteriores seguem verdes; +7 novos testes de documentação.
+
+### 7.2) Ambiente combinado (pytest + PyYAML) em venv descartável
+Cobre também os testes estruturais do workflow que dependem de PyYAML:
+```
+$ ~/.openclaw/tmp/opencode/pr-policy-venv/bin/python -m pytest scripts/test_pr_policy.py -q
+60 passed in 1.08s
+```
+
+## 8) Autorização (4º commit) — push + PR draft automático (docs)
+
+Nova autorização do usuário: ao concluir o pipeline multiagente/local com
+**revisão PASS**, **testes obrigatórios verdes**, **branch `pre-develop/*`
+válida** e **worktree limpa**, o orquestrador **faz push** e **abre/atualiza a PR
+draft para `develop`** **antes** do GitHub CI (o `ci.yml` dispara em
+`pull_request`) e depois **acompanha o CI**. Sem `ready`, sem auto-merge e sem
+merge automático; falha/skipped/cancelled/ausência/inconclusivos mantêm a PR em
+**draft e bloqueada**. Alteração documental estrita (sem código de produção):
+
+- `AGENTS.md` — regra "Abertura automática de PR draft (autorização)" + passo 6.
+- `docs/ci-cd.md` — seção "Abertura automática de PR draft (autorização)",
+  diagrama e seção de branches atualizados.
+- `scripts/test_pr_policy.py` — novo grupo `TestAutoDraftPRDocs` (gates, abertura
+  antes do CI, motivo `pull_request`, acompanhamento do CI, proibições e bloqueio
+  por checks não verdes).
+- Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
+
+### 8.1) Suíte policy (venv com pytest; sem PyYAML no repo)
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-policy
+60 passed, 9 skipped in 1.19s
+```
+Regressão: os 51+9 anteriores seguem verdes; +9 novos testes de documentação da
+autorização (`TestAutoDraftPRDocs`).
+
+## 9) Correção do job `pip-audit` (5º commit) — CI remoto 34784182136
+
+### 9.1) Falha observada no CI remoto (PR draft #1, run 34784182136)
+
+Somente o job `pip-audit` falhou. Log comprovado: a linha
+`cat services/*/requirements.txt | sort -u` concatenou o fim de um arquivo sem
+newline final com o início do seguinte, produzindo `httpx>=0.27fastapi>=0.115`
+(requirement inválido para o `pip-audit`).
+
+Reprodução local (arquivos reais do repo, sem alteração):
+```
+$ cat services/*/requirements.txt | sort -u
+httpx>=0.27
+httpx>=0.27fastapi>=0.115      # <-- linha fundida (playlist sem newline final + report)
+```
+`services/playlist/requirements.txt` termina em `httpx>=0.27` sem `\n`;
+`services/report/requirements.txt` começa com `fastapi>=0.115`.
+
+### 9.2) Correção
+
+- `.github/workflows/ci.yml` — job `pip-audit`:
+  ```
+  - awk 1 services/*/requirements.txt | sort -u > /tmp/reqs.txt
+  ```
+  (`awk 1` garante newline por registro antes do `sort -u`; sem novas
+  dependências no runner).
+- `scripts/test_ci_pip_audit.py` (novo, stdlib+pytest; PyYAML opcional).
+- `Makefile` — alvo `test-ci-audit` + inclusão no `make test`.
+
+### 9.3) Verificação do novo comportamento sobre os arquivos reais
+```
+$ awk 1 services/*/requirements.txt | sort -u
+PyJWT>=2.9
+cryptography>=42
+fastapi>=0.115
+httpx>=0.27
+mutagen>=1.47
+pydantic>=2.9
+python-dotenv>=1.0
+python-multipart>=0.0.9
+uvicorn[standard]>=0.32
+```
+Sem linha fundida.
+
+### 9.4) Suíte `test-ci-audit` (venv com pytest, sem PyYAML)
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-ci-audit
+9 passed, 2 skipped in 0.02s
+```
+(Skips: apenas os testes estruturais que exigem PyYAML.)
+
+### 9.5) Suíte `test-ci-audit` em ambiente com PyYAML (venv descartável)
+```
+$ ~/.openclaw/tmp/opencode/pr-policy-venv/bin/python -m pytest scripts/test_ci_pip_audit.py -q
+11 passed in 0.03s
+```
+
+### 9.6) Regressão: revertendo o comando antigo no `ci.yml` (guard falha)
+Com `git stash` sobre `.github/workflows/ci.yml` (volta a `cat ... | sort -u`):
+```
+4 failed, 7 passed in 0.04s
+TestCiPipAuditUsesSafeAssembly::test_assembly_uses_newline_separation_before_sort   FAIL
+TestCiPipAuditUsesSafeAssembly::test_assembly_is_not_the_vulnerable_cat_pipeline    FAIL
+TestCiPipAuditStructureYaml::test_run_script_has_safe_assembly_line                 FAIL
+TestCiPipAuditStructureYaml::test_run_script_has_no_raw_cat_pipeline                FAIL
+```
+Ou seja: o teste regressivo **falha para o comportamento antigo** e **valida o
+novo**. Stash restaurado em seguida.
+
+### 9.7) Suíte completa (contract + e2e + policy + ci-audit) — sem PyYAML
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test
+tests/contract  : 26 passed
+tests/e2e       : 29 passed
+test-policy     : 60 passed, 9 skipped
+test-ci-audit   : 9 passed, 2 skipped
+```
+Nenhuma alteração em requirements.txt ou código de produção; commit local
+separado; sem push/PR/merge.

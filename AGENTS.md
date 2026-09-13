@@ -23,20 +23,53 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
   em código de chamada.
 - Manter local simples e rastreável; evitar infraestrutura desnecessária.
 - Atualizar `README.md`, `docs/` e `context.md` quando o fluxo mudar.
+- **Fluxo pré-develop (obrigatório)**: trabalhar em `pre-develop/*` com **origem em
+  `origin/develop`** e **worktree isolada** (`git worktree add -b pre-develop/<assunto>`
+  a partir de `origin/develop`). Não commitar direto em `develop`.
+- **PR draft + CI obrigatório**: o PR para `develop` é aberto em **draft** e
+  permanece draft até todos os checks obrigatórios (`ci.yml` + `pr-policy`) estarem
+  verdes. Com a autorização abaixo, a abertura é automática.
+- **Abertura automática de PR draft (autorização)**: ao concluir o pipeline
+  multiagente/local com **revisão PASS**, **testes obrigatórios verdes**,
+  **branch `pre-develop/*` válida** e **worktree limpa**, o orquestrador
+  **faz push** da branch e **abre/atualiza a PR draft para `develop`**. A PR é
+  aberta **antes** do GitHub CI (o `ci.yml` atual é acionado por `pull_request`);
+  depois o orquestrador **acompanha o CI**. Nunca marcar `ready`, nunca habilitar
+  auto-merge e nunca mergear automaticamente. Checks em **falha, skipped, cancelled, ausentes ou
+  inconclusivos** mantêm a PR em **draft e bloqueada**.
+- **Squash e auto-merge só após checks**: merge via **squash**; **auto-merge apenas
+  depois dos checks verdes** — nunca habilitar auto-merge que ignore checks.
+- **Política de PRs**: PR para `develop` exige head `pre-develop/*`; PR para `main`
+  só pode vir de `develop`. Verificado pelo check `pr-policy`, que roda em
+  `pull_request_target` com **lógica inline** (`permissions: contents: read`, sem
+  checkout, sem pip e sem executar código do head do PR) espelhando
+  `.github/pr-policy.yml`; `scripts/test_pr_policy.py` garante a consistência.
+  `pull_request_target` usa o workflow da **branch padrão (`main`)** — por isso,
+  antes de tornar `pr-policy` required, o bootstrap exige o workflow presente em
+  `main` (merge em develop → promoção `develop`→`main` → PR piloto verde → só
+  então required checks de `develop`/`main`; ver `docs/ci-cd.md`).
 
 ## Fluxo de trabalho
 
 1. Identifique o serviço/contrato alvo antes de editar.
 2. Implemente a menor mudança coerente com o serviço.
-3. Valide: `make test-contract` e `make test-e2e` (fluxo completo).
+3. Valide: `make test-contract`, `make test-e2e` e `make test-policy` (política pr-policy).
 4. Garanta `/health` e `/metrics` e logs úteis nos serviços afetados.
 5. Atualize documentação e, se mudar env/portas, o `.env.example`.
+6. Com revisão local **PASS** (testes obrigatórios verdes, branch `pre-develop/*`
+   válida, worktree limpa): faça push e **abra/atualize a PR draft para `develop`**
+   antes do GitHub CI; depois **acompanhe o CI**. Não marcar `ready`, não habilitar
+   auto-merge e não mergear automaticamente.
 
 ## Comandos úteis
 
 ```bash
 make setup                # venv + contracts + deps
 make run-<serviço>        # ex.: make run-bpm-match
-make test                 # roda tudo
+make test                 # roda tudo (contract + e2e + policy)
+make test-policy          # parser + consistência/segurança do workflow inline
 make up / make down       # docker compose
+python3 scripts/validate_pr_policy.py --head <branch> --base <branch>   # valida PR localmente
+# Sem .venv local, use uma venv existente com pytest:
+make VENV=/caminho/da/venv test-policy
 ```

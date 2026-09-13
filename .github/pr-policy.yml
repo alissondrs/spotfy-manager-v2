@@ -1,0 +1,32 @@
+# pr-policy.yml — Política de fluxo de PRs (pré-develop)
+#
+# Fonte de verdade das regras validadas por scripts/validate_pr_policy.py e
+# pelo workflow .github/workflows/pr-policy.yml. Mudanças aqui exigem
+# atualizar os testes em scripts/test_pr_policy.py.
+#
+# Validação local (sem dependências novas, stdlib apenas):
+#   python3 scripts/validate_pr_policy.py --head <branch> --base <branch>
+#
+# Fail-closed: se o arquivo for inválido/ausente ou faltar regra para a base
+# alvo do PR, o check pr-policy falha (não libera merge silencioso).
+#
+# Formato (subconjunto YAML suportado pelo validador):
+#   version: <int>
+#   rules:
+#     - base: <branch destino>
+#       head_exact: <branch exata>     # ou
+#       head_pattern: <glob>           #  fnmatch sobre github.head_ref
+#       reason: <motivo>
+#
+# head_pattern usa fnmatch ("*" cruza "/"): "pre-develop/*" aceita
+# pre-develop/ci-pr-policy, pre-develop/x/y, etc.
+
+version: 1
+
+rules:
+  - base: develop
+    head_pattern: "pre-develop/*"
+    reason: "integração em develop só via fluxo pré-develop (PR prévia a partir de pre-develop/*)"
+  - base: main
+    head_exact: develop
+    reason: "produção só recebe promoção a partir de develop"
