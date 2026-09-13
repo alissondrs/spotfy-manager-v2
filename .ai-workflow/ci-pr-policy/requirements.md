@@ -55,3 +55,17 @@ O requisito 4 foi atendido na revisão corretiva com `pull_request_target` +
 executar qualquer script/arquivo do head do PR, fail-closed); `scripts/`
 `validate_pr_policy.py` passou a ser apenas validação local, com testes de
 consistência entre as regras locais e a lógica inline do workflow.
+
+## Nota corretiva (3º commit)
+
+O bootstrap documentado estava incompleto. A documentação oficial do GitHub
+confirma que `pull_request_target` roda **no contexto da branch padrão** (neste
+repo, `main`) — o workflow executado é o da branch padrão, não o da base/head do
+PR. Portanto, mergear apenas em `develop` não cria o check. Rollout corrigido:
+(1) merge em `develop` **sem** tornar `pr-policy` required; (2) promoção
+`develop` → `main` pelo fluxo autorizado (workflow passa a existir na branch
+padrão e o evento passa a disparar); (3) PR piloto `pre-develop/*` → `develop`
+confirmando o check verde; (4) só então adicionar `pr-policy` aos required
+checks de `develop` e `main`. `docs/ci-cd.md`, `AGENTS.md`, comentário do
+workflow e artefatos `.ai-workflow/*` atualizados; teste novo garante que a
+documentação menciona `main`/branch padrão antes da ativação.

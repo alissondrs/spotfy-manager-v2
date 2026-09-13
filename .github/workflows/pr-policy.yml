@@ -12,10 +12,16 @@ name: pr-policy
 # Fail-closed: head/base ausentes ou base sem regra ⇒ o check falha.
 #
 # Bootstrap (necessário antes de tornar `pr-policy` um required check):
-#   1. merge deste workflow em develop (no primeiro PR o check ainda não existe
-#      na base e, portanto, não roda);
-#   2. abra um PR seguinte para develop e confirme que o check roda e fica verde;
-#   3. só então adicione `pr-policy` aos required checks de develop e main.
+# `pull_request_target` roda no contexto da BRANCH PADRÃO do repo (aqui, main):
+# o workflow executado é o da branch padrão, não o da base/head do PR. Então o
+# check só passa a existir quando este workflow estiver também em main.
+#   1. merge em develop, sem tornar `pr-policy` required (no primeiro PR o check
+#      ainda não existe e pode nem aparecer; esperado);
+#   2. promova develop -> main pelo fluxo autorizado (workflow agora presente na
+#      branch padrão, e o evento passa a disparar);
+#   3. abra uma PR piloto pre-develop/* -> develop e confirme que o check roda e
+#      fica verde;
+#   4. só então adicione `pr-policy` aos required checks de develop e main.
 # Torná-lo required antes disso deixa todos os PRs bloqueados (check nunca dispara).
 #
 # Não renomeie o job `pr-policy`: é required check na proteção de branches.

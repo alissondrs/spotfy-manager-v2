@@ -48,3 +48,14 @@ confiável do PR que existia ao rodar `scripts/validate_pr_policy.py`,
 deslocou `scripts/validate_pr_policy.py` para validação local e adicionou testes
 de consistência/segurança em `scripts/test_pr_policy.py`. Bootstrap documentado
 em `docs/ci-cd.md`.
+
+## Atualização corretiva (3º commit)
+
+O bootstrap foi corrigido de forma estritamente local (docs + testes): como
+`pull_request_target` usa o workflow da **branch padrão (`main`)**, mergear em
+`develop` não é suficiente para o check surgir. Ordem correta: (1) merge em
+`develop` sem tornar `pr-policy` required; (2) promoção `develop`→`main` pelo
+fluxo autorizado; (3) PR piloto `pre-develop/*`→`develop` verde; (4) só então
+adicionar o check aos required checks de `develop`/`main`. `docs/ci-cd.md`,
+`AGENTS.md`, comentário do workflow, artefatos `.ai-workflow/*` e teste de
+documentação refletem isso. Nenhuma ação remota; código de produção intocado.

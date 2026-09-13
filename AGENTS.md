@@ -36,7 +36,10 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
   `pull_request_target` com **lógica inline** (`permissions: contents: read`, sem
   checkout, sem pip e sem executar código do head do PR) espelhando
   `.github/pr-policy.yml`; `scripts/test_pr_policy.py` garante a consistência.
-  Antes de tornar `pr-policy` required, veja o bootstrap em `docs/ci-cd.md`.
+  `pull_request_target` usa o workflow da **branch padrão (`main`)** — por isso,
+  antes de tornar `pr-policy` required, o bootstrap exige o workflow presente em
+  `main` (merge em develop → promoção `develop`→`main` → PR piloto verde → só
+  então required checks de `develop`/`main`; ver `docs/ci-cd.md`).
 
 ## Fluxo de trabalho
 

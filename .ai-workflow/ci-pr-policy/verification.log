@@ -106,3 +106,38 @@ $ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-policy
 Notas de regressão: os 44+9 testes anteriores (parser/fail-closed/CLI) seguem
 verdes; os novos testes de consistência/segurança passam nos três ambientes
 acima.
+
+## 7) Revisão corretiva (3º commit) — bootstrap exige a branch padrão (`main`)
+
+Motivo: a documentação oficial do GitHub confirma que `pull_request_target`
+executa **no contexto da branch padrão do repo** (`main` aqui) e usa o workflow
+da branch padrão — mergear só em `develop` não faz o check disparar. Correção
+estritamente local (sem push/PR, sem código de produção):
+
+- `.github/workflows/pr-policy.yml` — comentário de bootstrap com a ordem
+  correta: merge em develop (sem required) → promoção develop→main → PR piloto
+  → required checks.
+- `docs/ci-cd.md` — seção de bootstrap passa a exigir o workflow na **branch
+  padrão `main`** antes da ativação; nota dos required checks atualizada.
+- `AGENTS.md` — política de PRs menciona que `pull_request_target` usa o
+  workflow da branch padrão (`main`).
+- `scripts/test_pr_policy.py` — novo grupo `TestBootstrapDocsRequireDefaultBranch`:
+  garante que `docs/ci-cd.md` menciona `main`/branch padrão no bootstrap, que
+  `pull_request_target` está ligado à branch padrão e que a ordem do rollout é
+  develop → main → PR piloto → required checks; também cobre `AGENTS.md` e o
+  comentário do workflow.
+- Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.
+
+### 7.1) Suíte policy (venv com pytest; sem PyYAML no repo)
+```
+$ make VENV=/Users/alisson/labs-env/projects/spotfy-manager-v2/.venv test-policy
+51 passed, 9 skipped in 1.19s
+```
+Regressão: 44+9 anteriores seguem verdes; +7 novos testes de documentação.
+
+### 7.2) Ambiente combinado (pytest + PyYAML) em venv descartável
+Cobre também os testes estruturais do workflow que dependem de PyYAML:
+```
+$ ~/.openclaw/tmp/opencode/pr-policy-venv/bin/python -m pytest scripts/test_pr_policy.py -q
+60 passed in 1.08s
+```

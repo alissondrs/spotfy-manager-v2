@@ -31,8 +31,10 @@ Workflow próprio e estável do check `pr-policy`:
   apenas `github.event.pull_request.head.ref`/`base.ref` com **lógica inline**
   (bloco Python dentro do próprio workflow, fail-closed). Nenhum arquivo do head
   (não confiável) do PR é baixado ou executado.
-- Bootstrap documentado (workflow precisa estar nas bases antes de virar
-  required check; ver `docs/ci-cd.md`).
+- Bootstrap documentado: como `pull_request_target` roda no contexto da
+  **branch padrão (`main`)**, o workflow precisa estar em `main` antes de virar
+  required check — merge em develop (sem required) → promoção `develop`→`main`
+  → PR piloto verde → required checks (ver `docs/ci-cd.md`).
 
 ### `scripts/validate_pr_policy.py`
 Validador CLI/env em **stdlib** (Python ≥ 3.11):
@@ -82,3 +84,20 @@ obrigatório, squash e auto-merge só após checks, política `pr-policy`
 - Código de produção (serviços/contracts), proteção remota de branches,
   `.env*`, segredos, `ci.yml` (14 checks preservados), `build-publish.yml`,
   `ci-project.yaml`.
+
+## Revisão corretiva (3º commit — estritamente local, sem push/PR)
+
+Correção do bootstrap: a documentação oficial do GitHub confirma que
+`pull_request_target` executa **no contexto da branch padrão** (repo usa `main`),
+utilizando o workflow da branch padrão — mergear só em `develop` não cria o check.
+Ajustes de documento/comentário/teste (nenhum código de produção):
+
+- `.github/workflows/pr-policy.yml` — comentário de bootstrap com a ordem correta
+  (merge em develop → promoção develop→main → PR piloto → required checks).
+- `docs/ci-cd.md` — seção "Segurança e bootstrap do check `pr-policy`" e notas
+  finais agora exigem o workflow na **branch padrão `main`** antes da ativação.
+- `AGENTS.md` — política de PRs registra que `pull_request_target` usa o workflow
+  da branch padrão (`main`).
+- `scripts/test_pr_policy.py` — novo grupo de testes verifica que `docs/ci-cd.md`
+  menciona `main`/branch padrão e a ordem do rollout antes da ativação.
+- Artefatos `.ai-workflow/ci-pr-policy/*` atualizados.

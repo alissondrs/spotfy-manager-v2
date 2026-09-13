@@ -20,6 +20,8 @@ WORKFLOW_PATH = (
     Path(__file__).resolve().parent.parent / ".github" / "workflows" / "pr-policy.yml"
 )
 VALIDATOR_PATH = Path(__file__).resolve().parent.parent / "scripts" / "validate_pr_policy.py"
+CI_CD_PATH = Path(__file__).resolve().parent.parent / "docs" / "ci-cd.md"
+AGENTS_PATH = Path(__file__).resolve().parent.parent / "AGENTS.md"
 
 # ---------------------------------------------------------------------------
 # import do validador (funciona sem alterar sys.path porque pytest já resolve)
@@ -482,6 +484,63 @@ class TestWorkflowStructure:
         env = w["jobs"]["pr-policy"]["steps"][0]["env"]
         assert env["PR_HEAD"] == "${{ github.event.pull_request.head.ref }}"
         assert env["PR_BASE"] == "${{ github.event.pull_request.base.ref }}"
+
+
+# ========================================================================
+# Bootstrap: a documentação deve exigir a branch padrão (main) antes da ativação
+# ========================================================================
+#
+# `pull_request_target` roda no contexto da branch padrão do repo (aqui `main`)
+# e usa o workflow da branch padrão. O rollout correto é: merge em develop →
+# promoção develop→main → PR piloto verde → só então required checks. Estes
+# testes garantem que `docs/ci-cd.md`, `AGENTS.md` e o comentário do workflow
+# deixam isso explícito antes de qualquer ativação.
+
+
+def _doc_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+class TestBootstrapDocsRequireDefaultBranch:
+    def test_ci_cd_mentions_default_branch_and_main(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "branch padrão" in text
+        assert "`main`" in text
+
+    def test_ci_cd_ties_pull_request_target_to_default_branch(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "no contexto da branch padrão" in text
+        assert "o workflow usado é o arquivo da **branch padrão**" in text
+
+    def test_ci_cd_says_check_only_exists_when_workflow_is_on_main(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "só passa a existir quando o workflow estiver na branch padrão" in text
+
+    def test_ci_cd_rollout_goes_through_main_before_pilot_and_required(self):
+        text = _doc_text(CI_CD_PATH)
+        step_develop = text.index("Merge deste workflow em `develop`")
+        step_main = text.index("Promova `develop` → `main`")
+        step_pilot = text.index("PR piloto")
+        step_required = text.index("adicione `pr-policy` aos required checks")
+        assert step_develop < step_main < step_pilot < step_required
+
+    def test_ci_cd_required_notes_reference_default_branch(self):
+        text = _doc_text(CI_CD_PATH)
+        assert "branch padrão `main`" in text
+
+    def test_agents_mentions_default_branch_bootstrap(self):
+        text = _doc_text(AGENTS_PATH)
+        assert "branch padrão (`main`)" in text
+        assert "docs/ci-cd.md" in text
+        assert "PR piloto" in text
+        assert "required checks" in text
+
+    def test_workflow_comment_mentions_default_branch_main(self):
+        text = _workflow_text()
+        assert "BRANCH PADRÃO" in text
+        assert "main" in text
+        assert "PR piloto" in text
+        assert "required checks" in text
 
 
 # ========================================================================

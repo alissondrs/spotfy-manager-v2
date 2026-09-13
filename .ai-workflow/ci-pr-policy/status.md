@@ -1,7 +1,7 @@
 run_id: ci-pr-policy
 created_at: 2026-09-13T15:48:00-03:00
 producer: opencode
-status: implementado, local_only (aguardando push/PR autorizado)
+status: implementado, local_only (3 commits) (aguardando push/PR autorizado)
 source_refs:
   - skill:pipeline-multiagente-de-engenharia
   - branch:pre-develop/ci-pr-policy
@@ -28,7 +28,8 @@ PyYAML / 44 + 9 skipped sem PyYAML). Commits locais realizados em
   inline e garantias de ausência de checkout/pip/execução de código do PR.
 - `Makefile` — alvo `test-policy` incluído em `make test`; `make VENV=/caminho/da/venv
   test-policy`/fallback `python3` para worktrees sem `.venv`.
-- `docs/ci-cd.md`, `AGENTS.md` — fluxo pré-develop documentado (incl. bootstrap).
+- `docs/ci-cd.md`, `AGENTS.md` — fluxo pré-develop documentado (incl. bootstrap
+  exigindo a branch padrão `main` antes da ativação).
 - `.ai-workflow/ci-pr-policy/*` — requisitos/plano/impl/verificação/status.
 
 ## Revisão corretiva (2º commit, sem push/PR)
@@ -38,7 +39,21 @@ código não confiável no runner. Corrigido para `pull_request_target` com lóg
 inline somente sobre `head.ref`/`base.ref`; `scripts/validate_pr_policy.py` segue
 apenas como validação local; testes garantem consistência (inline == YAML, mesmo
 veredito em matriz) e ausência de checkout/pip/steps/execução do PR. Bootstrap
-(wf presente nas bases antes de required) documentado em `docs/ci-cd.md`.
+corrigido (workflow presente na **branch padrão `main`** antes de required)
+documentado em `docs/ci-cd.md`.
+
+## Revisão corretiva (3º commit, sem push/PR)
+
+A documentação oficial do GitHub confirma que `pull_request_target` roda **no
+contexto da branch padrão** (`main` neste repo): o workflow usado é o da branch
+padrão, não o da base/head do PR. O bootstrap anterior (merger em `develop` +
+PR seguinte) estava incorreto — sem o workflow em `main` o check nunca dispara.
+Rollout corrigido em `docs/ci-cd.md`, `AGENTS.md`, comentário do workflow e
+artefatos `.ai-workflow/*`: merge em `develop` (sem required) → promoção
+`develop`→`main` pelo fluxo autorizado → PR piloto `pre-develop/*`→`develop`
+verde → só então adicionar `pr-policy` aos required checks de `develop`/`main`.
+Nova suíte de testes garante que a documentação menciona `main`/branch padrão
+antes da ativação. Nenhuma ação remota; código de produção intocado.
 
 ## Checks preservados
 
@@ -46,14 +61,17 @@ Os 14 checks de `ci.yml` não foram renomeados/removidos; `pr-policy` é o +15º
 
 ## Para ativação na proteção de branches (fora desta branch)
 
-Após merge em `develop`, adicionar `pr-policy` à lista de *required checks* de
-`develop` e `main` na proteção de branches (não feito aqui, por escopo).
+Após merge em `develop` e promoção `develop` → `main` (workflow na **branch
+padrão**), abrir uma PR piloto `pre-develop/*` → `develop` confirmando o check
+verde e só então adicionar `pr-policy` à lista de *required checks* de `develop`
+e `main` na proteção de branches (não feito aqui, por escopo).
 
 ## Pendências / limitações
 
 - Proteção remota não foi alterada (requisito). `pr-policy` precisa do
-  **bootstrap** (workflow em `develop` + verde em um PR seguinte) antes de entrar
-  na lista de required checks; ver `docs/ci-cd.md`.
+  **bootstrap** na **branch padrão `main`** (merge em develop → promoção
+  develop→main → PR piloto verde) antes de entrar na lista de required checks;
+  ver `docs/ci-cd.md`.
 - Workflow ainda não foi executado em um runner GitHub (sem push/PR aqui);
   lógica inline e consistência validadas por testes em 3 ambientes (pytest sem
   yaml, python3 com yaml, venv descartável com pytest+yaml).

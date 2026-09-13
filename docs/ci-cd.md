@@ -87,18 +87,28 @@ sem executar nenhum arquivo/script do head (não confiável) do PR.
 
 ### Segurança e bootstrap do check `pr-policy`
 
-Como o check roda em `pull_request_target`, o GitHub usa o **arquivo do workflow
-da branch base** — o conteúdo do head do PR jamais é executado. Para o check
-existir e ser exigível, o workflow precisa estar nas branches base:
+O check roda em `pull_request_target`. A documentação oficial do GitHub confirma
+que esse evento executa **no contexto da branch padrão do repositório** — neste
+repo, `main`: o workflow usado é o arquivo da **branch padrão**, jamais o do head
+ou da base do PR. Duas consequências: (1) o head do PR não é executado (seguro);
+(2) o check **só passa a existir quando o workflow estiver na branch padrão
+(`main`)** — mergear apenas em `develop` não faz o evento disparar.
 
-1. **Merge deste workflow em `develop`** — no primeiro PR para `develop` o check
-   ainda não existe na base e pode nem aparecer; isso é esperado.
-2. **Confirme em um PR seguinte** (ex.: `pre-develop/bump`) que o check roda e
-   fica verde — após o merge, o workflow existe em `develop`/`main`.
-3. **Só então adicione `pr-policy` aos required checks** de `develop` e `main`.
+Rollout correto (nesta ordem):
+
+1. **Merge deste workflow em `develop`** — **sem tornar `pr-policy` required**.
+   No primeiro PR para `develop` o GitHub ainda lê o workflow da branch padrão
+   (`main`), que ainda não o contém; o check pode nem aparecer. Isso é esperado.
+2. **Promova `develop` → `main`** pelo fluxo autorizado (PR de `develop` para
+   `main`). Com o merge, o workflow passa a estar na **branch padrão** e o GitHub
+   passa a dispará-lo para eventos `pull_request_target`.
+3. **Abra uma PR piloto** `pre-develop/*` → `develop` (ex.:
+   `pre-develop/ativar-pr-policy`) e confirme que o check `pr-policy` roda e fica
+   **verde**.
+4. **Só então adicione `pr-policy` aos required checks** de `develop` e `main`.
 
 Torná-lo required antes do bootstrap deixa **todos os PRs bloqueados** (o check
-nunca dispara porque o arquivo do workflow não está na base).
+não dispara porque o workflow da branch padrão ainda não o contém).
 
 Validação local (sem dependências novas; worktrees sem `.venv` local podem
 apontar para uma venv existente):
@@ -132,8 +142,8 @@ Nomes de jobs exigidos na proteção de branches (estáveis — **não renomear*
 
 Além desses 14, o check `pr-policy` (workflow próprio) deve ser adicionado à
 lista de required checks de `develop` e `main` — **somente após o bootstrap**
-(workflow já fundido em `develop` e verde em um PR seguinte; ver seção
-"Segurança e bootstrap do check `pr-policy`").
+(workflow presente na **branch padrão `main`** e verde em uma PR piloto; ver
+seção "Segurança e bootstrap do check `pr-policy`").
 
 ## CI (ci.yml)
 
@@ -168,8 +178,8 @@ Workflow próprio e estável, roda em `pull_request_target` (branches
 2. fail-closed: head/base ausentes ou base sem regra ⇒ o check falha.
 
 Sem `actions/checkout`, sem `setup-python`, sem steps com `uses:`. O bootstrap
-(workflow presente nas branches base antes de ativar como required check) está
-descrito na seção anterior.
+(workflow presente na **branch padrão `main`** antes de ativar como required
+check) está descrito na seção anterior.
 
 ## Publicação (build-publish.yml)
 
