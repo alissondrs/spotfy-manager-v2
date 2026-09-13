@@ -1,6 +1,12 @@
 SHELL := /bin/bash
-VENV := .venv
+VENV ?= .venv
+# Worktrees sem .venv local: informe um venv existente com `make VENV=/caminho/da/venv
+# test-policy`; se o venv local não existir, cai para python3 do PATH (ex.: aquele que
+# já tem pytest/PyYAML). Não cria dependências novas para o repo.
 PY := $(VENV)/bin/python
+ifeq ($(wildcard $(PY)),)
+PY := python3
+endif
 PIP := $(VENV)/bin/pip
 SERVICES := identity fileimport playlist catalog bpm-match library report web
 
@@ -50,7 +56,7 @@ test-contract: ## Testes unitários dos contratos
 test-e2e: ## Testes ponta a ponta (fluxo completo)
 	$(PY) -m pytest tests/e2e -x -q
 
-test-policy: ## Testes da política pr-policy (parser + casos válidos/inválidos)
+test-policy: ## Testes da política pr-policy (parser + consistência do workflow inline)
 	$(PY) -m pytest scripts/test_pr_policy.py -q
 
 lint: ## Verificação sintática mínima

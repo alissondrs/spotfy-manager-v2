@@ -32,8 +32,11 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
 - **Squash e auto-merge só após checks**: merge via **squash**; **auto-merge apenas
   depois dos checks verdes** — nunca habilitar auto-merge que ignore checks.
 - **Política de PRs**: PR para `develop` exige head `pre-develop/*`; PR para `main`
-  só pode vir de `develop`. Verificado pelo check `pr-policy`
-  (`.github/pr-policy.yml` + `scripts/validate_pr_policy.py`).
+  só pode vir de `develop`. Verificado pelo check `pr-policy`, que roda em
+  `pull_request_target` com **lógica inline** (`permissions: contents: read`, sem
+  checkout, sem pip e sem executar código do head do PR) espelhando
+  `.github/pr-policy.yml`; `scripts/test_pr_policy.py` garante a consistência.
+  Antes de tornar `pr-policy` required, veja o bootstrap em `docs/ci-cd.md`.
 
 ## Fluxo de trabalho
 
@@ -49,7 +52,9 @@ pacote de contratos compartilhado (`contracts/`). Funciona local e em docker com
 make setup                # venv + contracts + deps
 make run-<serviço>        # ex.: make run-bpm-match
 make test                 # roda tudo (contract + e2e + policy)
-make test-policy          # parser + casos válidos/inválidos da política
+make test-policy          # parser + consistência/segurança do workflow inline
 make up / make down       # docker compose
 python3 scripts/validate_pr_policy.py --head <branch> --base <branch>   # valida PR localmente
+# Sem .venv local, use uma venv existente com pytest:
+make VENV=/caminho/da/venv test-policy
 ```

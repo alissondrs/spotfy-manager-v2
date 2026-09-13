@@ -80,15 +80,39 @@ Regras declaradas em `.github/pr-policy.yml` e aplicadas pelo workflow
 | main   | `develop`          |
 
 O check é **fail-closed**: política ausente, malformada ou sem regra para a base
-do PR faz o check falhar. Roda em `pull_request` com `permissions: contents: read`
-(não usa o evento de privilégios elevados, não grava nada e não acessa secrets).
+do PR faz o check falhar. O workflow roda em `pull_request_target` com
+`permissions: contents: read` e valida apenas `github.event.pull_request.head.ref`
+/ `base.ref` em **lógica inline** — sem checkout, sem instalar dependências e
+sem executar nenhum arquivo/script do head (não confiável) do PR.
 
-Validação local (sem dependências novas):
+### Segurança e bootstrap do check `pr-policy`
+
+Como o check roda em `pull_request_target`, o GitHub usa o **arquivo do workflow
+da branch base** — o conteúdo do head do PR jamais é executado. Para o check
+existir e ser exigível, o workflow precisa estar nas branches base:
+
+1. **Merge deste workflow em `develop`** — no primeiro PR para `develop` o check
+   ainda não existe na base e pode nem aparecer; isso é esperado.
+2. **Confirme em um PR seguinte** (ex.: `pre-develop/bump`) que o check roda e
+   fica verde — após o merge, o workflow existe em `develop`/`main`.
+3. **Só então adicione `pr-policy` aos required checks** de `develop` e `main`.
+
+Torná-lo required antes do bootstrap deixa **todos os PRs bloqueados** (o check
+nunca dispara porque o arquivo do workflow não está na base).
+
+Validação local (sem dependências novas; worktrees sem `.venv` local podem
+apontar para uma venv existente):
 
 ```bash
-make test-policy
+make test-policy                          # usa .venv local, senão python3 do PATH
+make VENV=/caminho/da/venv test-policy    # venv existente com pytest
 python3 scripts/validate_pr_policy.py --head pre-develop/x --base develop
 ```
+
+`scripts/test_pr_policy.py` cobre parser, fail-closed e a **consistência**
+entre `.github/pr-policy.yml` e a lógica inline do workflow: regras idênticas,
+mesmo veredito para uma matriz de pares `(head, base)` e **ausência garantida**
+de `checkout`/`pip`/execução de script do PR no workflow.
 
 Nota: a proteção foi aplicada via API de branch protection; em repositórios
 privados no plano GitHub Free ela exige o GitHub Pro. Para este projeto o
@@ -107,7 +131,9 @@ Nomes de jobs exigidos na proteção de branches (estáveis — **não renomear*
 - `docker-build-<serviço>` para cada um dos 8 serviços
 
 Além desses 14, o check `pr-policy` (workflow próprio) deve ser adicionado à
-lista de required checks de `develop` e `main`.
+lista de required checks de `develop` e `main` — **somente após o bootstrap**
+(workflow já fundido em `develop` e verde em um PR seguinte; ver seção
+"Segurança e bootstrap do check `pr-policy`").
 
 ## CI (ci.yml)
 
@@ -132,15 +158,18 @@ docker build --build-arg SERVICE=<serviço> --build-arg SERVICE_PORT=<porta> .
 
 ## pr-policy (pr-policy.yml)
 
-Workflow próprio e estável, roda em `pull_request` (branches `develop`/`main`):
+Workflow próprio e estável, roda em `pull_request_target` (branches
+`develop`/`main`) com `permissions: contents: read`:
 
-1. `actions/checkout` com `fetch-depth: 1` (sem histórico, sem passo de produção);
-2. executa `scripts/validate_pr_policy.py` com `PR_HEAD`/`PR_BASE` do evento —
-   valida apenas nomes de branch, sem executar aplicação e sem secrets;
-3. autoteste (`pytest scripts/test_pr_policy.py`) para garantir parser/regras.
+1. `python3 - <head> <base>` com **lógica inline** (bloco dentro do próprio
+   workflow) a partir de `github.event.pull_request.head.ref`/`base.ref` —
+   apenas nomes de branch, sem baixar o repo, sem pip, sem executar qualquer
+   arquivo do PR e sem credenciais;
+2. fail-closed: head/base ausentes ou base sem regra ⇒ o check falha.
 
-`permissions: contents: read` apenas; sem `pull-requests: write`, sem comentários
-automáticos. Falha fechado: à menor anomalia o check falha e bloqueia o merge.
+Sem `actions/checkout`, sem `setup-python`, sem steps com `uses:`. O bootstrap
+(workflow presente nas branches base antes de ativar como required check) está
+descrito na seção anterior.
 
 ## Publicação (build-publish.yml)
 

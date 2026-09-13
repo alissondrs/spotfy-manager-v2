@@ -1,3 +1,12 @@
+run_id: ci-pr-policy
+created_at: 2026-09-13T15:47:00-03:00
+producer: opencode
+status: aprovado
+source_refs:
+  - skill:pipeline-multiagente-de-engenharia
+  - branch:pre-develop/ci-pr-policy
+  - base:origin/develop@6ed2d5c09639a86c57c387ed9a7eb077e12798d1
+
 # Requisitos — Política de fluxo pré-develop (CI + `pr-policy`)
 
 - **Origem do trabalho**: branch `pre-develop/ci-pr-policy`, criada de
@@ -37,3 +46,12 @@
 9. Criar `.ai-workflow/ci-pr-policy/{requirements.md, plan.md, implementation.md,
    verification.log, status.md}` (sem segredos).
 10. Commit local claro e resumo final com arquivos, testes, hash e limitações.
+
+## Nota corretiva (2º commit)
+
+O requisito 4 foi atendido na revisão corretiva com `pull_request_target` +
+`permissions: contents: read` e **validação inline** sobre
+`github.event.pull_request.head.ref`/`base.ref` (sem checkout, sem pip, sem
+executar qualquer script/arquivo do head do PR, fail-closed); `scripts/`
+`validate_pr_policy.py` passou a ser apenas validação local, com testes de
+consistência entre as regras locais e a lógica inline do workflow.

@@ -1,19 +1,31 @@
 name: pr-policy
 
 # Check estável que governa a topologia de PRs pré-desenvolvimento.
-# Regras declaradas em .github/pr-policy.yml (ver scripts/validate_pr_policy.py).
+# As regras vivem em .github/pr-policy.yml e são espelhadas aqui em lógica
+# inline; testes locais garantem a consistência entre os dois lados.
 #
-# Segurança: roda em `pull_request` (evento sem privilégios elevados), com token
-# `contents: read` apenas (sem gravação, sem secrets elevados). O job valida
-# somente os nomes de branch GitHub (head/base) e falha fechado.
-# Não rename o job `pr-policy`: é required check na proteção de branches.
+# Segurança: roda em `pull_request_target`, mas o job usa APENAS lógica inline
+# sobre `github.event.pull_request.head.ref` / `base.ref` (nomes de branch do
+# payload do evento). Ele NÃO baixa o repositório, NÃO instala dependências,
+# NÃO executa qualquer arquivo/script do head (não confiável) do PR e o token
+# fica limitado a `permissions: contents: read` (sem gravação, sem credenciais).
+# Fail-closed: head/base ausentes ou base sem regra ⇒ o check falha.
+#
+# Bootstrap (necessário antes de tornar `pr-policy` um required check):
+#   1. merge deste workflow em develop (no primeiro PR o check ainda não existe
+#      na base e, portanto, não roda);
+#   2. abra um PR seguinte para develop e confirme que o check roda e fica verde;
+#   3. só então adicione `pr-policy` aos required checks de develop e main.
+# Torná-lo required antes disso deixa todos os PRs bloqueados (check nunca dispara).
+#
+# Não renomeie o job `pr-policy`: é required check na proteção de branches.
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [develop, main]
 
 concurrency:
-  group: pr-policy-${{ github.ref }}
+  group: pr-policy-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -24,17 +36,50 @@ jobs:
     name: pr-policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Validar head/base contra pr-policy.yml
+      - name: Validar head/base com lógica inline (fail-closed)
         env:
-          PR_HEAD: ${{ github.head_ref }}
-          PR_BASE: ${{ github.base_ref }}
-        run: python3 scripts/validate_pr_policy.py
-
-      - name: Autoteste do validador (parser + casos válidos/inválidos)
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
         run: |
-          python3 -m pip install --quiet pytest
-          python3 -m pytest scripts/test_pr_policy.py -p no:cacheprovider -q
+          python3 - "$PR_HEAD" "$PR_BASE" <<'PY'
+          import fnmatch
+          import sys
+
+          # Regras espelhadas de .github/pr-policy.yml. Alterar as regras exige
+          # atualizar os três: policy YAML, o validador local e este
+          # bloco inline (ver test_pr_policy.py, que garante a consistência).
+          RULES = [
+              {"base": "develop", "head_exact": None, "head_pattern": "pre-develop/*"},
+              {"base": "main", "head_exact": "develop", "head_pattern": None},
+          ]
+
+          def allowed(head, base):
+              if not head or not base:
+                  return False
+              matches = [r for r in RULES if r["base"] == base]
+              if not matches:
+                  return False
+              for rule in matches:
+                  if rule["head_exact"] is not None:
+                      if head == rule["head_exact"]:
+                          return True
+                  elif fnmatch.fnmatch(head, rule["head_pattern"]):
+                      return True
+              return False
+
+          def main(argv=None):
+              args = list(sys.argv[1:] if argv is None else argv)
+              if len(args) != 2:
+                  print("uso: pr-policy <head> <base>", file=sys.stderr)
+                  return 2
+              head, base = args
+              passed = allowed(head, base)
+              print(
+                  f"[pr-policy] {'ok' if passed else 'fail-closed'}: "
+                  f"head={head!r} base={base!r}"
+              )
+              return 0 if passed else 1
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY

@@ -1,3 +1,13 @@
+run_id: ci-pr-policy
+created_at: 2026-09-13T15:48:00-03:00
+producer: opencode
+status: implementado (revisão corretiva)
+source_refs:
+  - skill:pipeline-multiagente-de-engenharia
+  - branch:pre-develop/ci-pr-policy
+  - base:origin/develop@6ed2d5c09639a86c57c387ed9a7eb077e12798d1
+  - commit:486ee5a5b9be59997a490a211cece3a7731e798b (versão original)
+
 # Implementação — Política de fluxo pré-develop (CI + `pr-policy`)
 
 ## O que foi feito
@@ -15,16 +25,14 @@ Subconjunto YAML mínimo, documentado no cabeçalho do próprio arquivo.
 ### `.github/workflows/pr-policy.yml`
 Workflow próprio e estável do check `pr-policy`:
 
-- `on: pull_request` com `branches: [develop, main]` (não usa o evento de
-  privilégios elevados).
-- `permissions: contents: read` — mínimo, sem gravação, sem secrets elevados,
-  sem comentários automáticos.
-- Passos:
-  1. `actions/checkout@v4` (`fetch-depth: 1`);
-  2. validação: `python3 scripts/validate_pr_policy.py` com `PR_HEAD`/`PR_BASE`
-     do evento (apenas nomes de branch);
-  3. autoteste: `pytest scripts/test_pr_policy.py` (parser + casos
-     válidos/inválidos) para garantir que a própria política está saudável.
+- `on: pull_request_target` com `branches: [develop, main]` e
+  `permissions: contents: read` (mínimo; sem gravação, sem credenciais).
+- **Sem checkout, sem setup-python, sem steps `uses:`, sem pip**: o job valida
+  apenas `github.event.pull_request.head.ref`/`base.ref` com **lógica inline**
+  (bloco Python dentro do próprio workflow, fail-closed). Nenhum arquivo do head
+  (não confiável) do PR é baixado ou executado.
+- Bootstrap documentado (workflow precisa estar nas bases antes de virar
+  required check; ver `docs/ci-cd.md`).
 
 ### `scripts/validate_pr_policy.py`
 Validador CLI/env em **stdlib** (Python ≥ 3.11):
@@ -40,15 +48,29 @@ Validador CLI/env em **stdlib** (Python ≥ 3.11):
   exit `0` (ok), `1` (inaprovado), `2` (erro de política/ambiente).
 
 ### `scripts/test_pr_policy.py` (pytest)
-44 testes: parser mínimo (válidos/inválidos), fail-closed, regras válidas e
+Testes do parser mínimo (válidos/inválidos), fail-closed, regras válidas e
 inválidas por par `(head, base)`, edges de `fnmatch`, cross-check com PyYAML
-(quando presente), consistência/safety do workflow (`pull_request` apenas,
-`contents: read`, job `pr-policy`, branches develop/main). Sem PyYAML, 7 testes
-de cross-check são pulados e os demais seguem passando (stdlib).
+(quando presente) e a revisão corretiva adiciona **garantias de consistência e
+segurança do workflow inline**:
+
+- `TestInlineRulesConsistency`: a lógica inline (`RULES`) do workflow é
+  idêntica a `.github/pr-policy.yml`;
+- `TestInlineBehaviorParity`: matriz de pares `(head, base)` — o bloco inline
+  extraído e rodado como subprocesso dá o mesmo veredito que o validador local;
+- `TestWorkflowNoUntrustedExecution`: ausência de `actions/checkout`, `pip`,
+  `scripts/`/`pytest`/`validate_pr_policy` no workflow, sem `secrets.`/`GITHUB_TOKEN`,
+  sem steps `uses:`, `pull_request_target` (não `pull_request`), `contents: read`;
+- `TestWorkflowStructure` (PyYAML): `pull_request_target` único, branches
+  `develop`/`main`, steps sem `uses:`, binding de head/base via evento.
+
+Sem PyYAML, os testes estruturais/cross-check são pulados; os demais seguem
+passando (stdlib).
 
 ### `Makefile`
 Novo alvo `test-policy` (roda `pytest scripts/test_pr_policy.py`) e inclusão em
-`make test`.
+`make test`. `VENV` sobrescrevível (`make VENV=/caminho/da/venv test-policy`) com
+fallback para `python3` do PATH quando o `.venv` local não existe (worktrees).
+`scripts/validate_pr_policy.py` continua como validação local (stdlib).
 
 ### `docs/ci-cd.md` e `AGENTS.md`
 Fluxo pré-develop: origem em `origin/develop`, worktree isolada, PR draft, CI

@@ -8,6 +8,8 @@ senão, testes de cross-check são pulados.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -290,19 +292,48 @@ class TestPyYAMLCrossCheck:
 
 
 # ========================================================================
-# Consistência do workflow: parser do arquivo pr-policy.yml do workflow
+# Consistência do workflow: extração da lógica inline vs .github/pr-policy.yml
 # ========================================================================
 
 
-def _grep_workflow_safety(path: Path) -> dict[str, bool]:
-    """Checagens textuais leves do workflow (sem dependência em PyYAML)."""
-    text = path.read_text()
-    return {
-        "no_pull_request_target": "pull_request_target" not in text,
-        "has_pr_policy_job": "pr-policy" in text,
-        "contents_read": "contents: read" in text,
-        "uses_pull_request_trigger": "pull_request:" in text,
-    }
+def _inline_python_source() -> str:
+    """Extrai o código Python embutido no passo de validação do workflow.
+
+    O heredoc `<<'PY' ... PY` é a única lógica executada pelo check; nada de
+    armazenado no repo é rodado. Essa extração textual (sem YAML) espelha o
+    que o passo injeta via stdin no python do runner.
+    """
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    marker = "<<'PY'"
+    start = text.index(marker) + len(marker)
+    if start < len(text) and text[start] == "\n":
+        start += 1
+    body: list[str] = []
+    for line in text[start:].splitlines():
+        if line.strip() == "PY":
+            return textwrap.dedent("\n".join(body))
+        body.append(line)
+    raise AssertionError("fim do heredoc PY não encontrado no workflow")
+
+
+def _inline_rules() -> list[dict]:
+    """Executa somente o bloco inline (stdlib) e extrai as regras RULES."""
+    ns: dict = {}
+    exec(compile(_inline_python_source(), "<pr-policy.yml inline>", "exec"), ns)
+    return [dict(r) for r in ns["RULES"]]
+
+
+def _normalize_rules(rules: list[dict]) -> list[dict]:
+    norm = []
+    for r in rules:
+        norm.append(
+            {
+                "base": r["base"],
+                "head_exact": r.get("head_exact"),
+                "head_pattern": r.get("head_pattern"),
+            }
+        )
+    return sorted(norm, key=lambda r: (r["base"], r["head_exact"] or "", r["head_pattern"] or ""))
 
 
 def _workflow_on(w: dict) -> dict:
@@ -310,57 +341,147 @@ def _workflow_on(w: dict) -> dict:
     return top or {}
 
 
+class TestInlineRulesConsistency:
+    def test_inline_rules_match_policy_file(self):
+        policy = [dict(r) for r in v.load_policy(POLICY_PATH)["rules"]]
+        assert _normalize_rules(_inline_rules()) == _normalize_rules(policy)
+
+    def test_inline_rules_cover_develop_and_main(self):
+        bases = {r["base"] for r in _inline_rules()}
+        assert bases == {"develop", "main"}
+
+
+class TestInlineBehaviorParity:
+    """Os mesmos pares (head, base) devem dar o mesmo veredito na lógica inline
+    (rodada como subprocesso, só com o bloco extraído) e no validador local."""
+
+    HEADS = [
+        "pre-develop/x",
+        "pre-develop/a/b/c",
+        "pre-develop",
+        "pre-developer/x",
+        "develop",
+        "main",
+        "feature/x",
+        "release/1.0",
+        "chore/x",
+        "",
+    ]
+    BASES = ["develop", "main", "feature", "develop-prod", ""]
+
+    def test_parity_matrix(self):
+        src = _inline_python_source()
+        for head in self.HEADS:
+            for base in self.BASES:
+                expected_rc = v.main(["--head", head, "--base", base])
+                proc = subprocess.run(
+                    [sys.executable, "-", head, base],
+                    input=src,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert proc.returncode in (0, 1), (head, base, proc.returncode, proc.stderr)
+                assert (proc.returncode == 0) == (expected_rc == 0), (
+                    head,
+                    base,
+                    expected_rc,
+                    proc.returncode,
+                    proc.stdout,
+                    proc.stderr,
+                )
+
+
+# ========================================================================
+# Segurança do workflow: ausência de checkout/pip/execução de código do PR
+# ========================================================================
+
+
+def _workflow_text() -> str:
+    return WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+class TestWorkflowNoUntrustedExecution:
+    """Checagens textuais (sem PyYAML): o check usa pull_request_target com
+    lógica inline e NÃO clona o head, não instala deps e não roda scripts."""
+
+    def test_pull_request_target_instead_of_pull_request(self):
+        text = _workflow_text()
+        assert "pull_request_target" in text
+        assert "pull_request:" not in text
+
+    def test_no_checkout_of_pr_code(self):
+        assert "actions/checkout" not in _workflow_text()
+
+    def test_no_pip_install(self):
+        assert "pip" not in _workflow_text()
+
+    def test_no_repo_scripts_execution(self):
+        text = _workflow_text()
+        assert "scripts/" not in text
+        assert "validate_pr_policy" not in text
+        assert "pytest" not in text
+
+    def test_no_secrets_or_token(self):
+        text = _workflow_text()
+        assert "secrets." not in text
+        assert "GITHUB_TOKEN" not in text
+
+    def test_no_uses_steps(self):
+        assert "uses:" not in _workflow_text()
+
+    def test_permissions_contents_read(self):
+        assert "contents: read" in _workflow_text()
+
+    def test_job_pr_policy_exists(self):
+        assert "pr-policy" in _workflow_text()
+
+
 @pytest.mark.skipif(not _has_pyyaml(), reason="PyYAML indisponível no ambiente")
-class TestWorkflowConsistency:
+class TestWorkflowStructure:
     def _parse_workflow(self):
         import yaml
 
         return yaml.safe_load(WORKFLOW_PATH.read_text())
 
-    def test_workflow_no_target_event(self):
+    def test_workflow_uses_pull_request_target_only(self):
         w = self._parse_workflow()
         top = _workflow_on(w)
-        assert "pull_request" in top
+        assert "pull_request_target" in top
+        assert "pull_request" not in top
         assert len(top) == 1
-        assert "pull_request" in top
+
+    def test_pull_request_target_branches(self):
+        w = self._parse_workflow()
+        branches = _workflow_on(w)["pull_request_target"].get("branches", [])
+        assert set(branches) == {"develop", "main"}
 
     def test_workflow_permissions_contents_read(self):
         w = self._parse_workflow()
         assert w.get("permissions", {}).get("contents") == "read"
 
-    def test_workflow_on_pull_request_branches(self):
-        w = self._parse_workflow()
-        branches = _workflow_on(w).get("pull_request", {}).get("branches", [])
-        assert set(branches) == {"develop", "main"}
-
     def test_workflow_has_pr_policy_job(self):
         w = self._parse_workflow()
-        jobs = w.get("jobs", {})
-        assert "pr-policy" in jobs
+        assert "pr-policy" in w.get("jobs", {})
 
-    def test_workflow_job_has_validate_step(self):
+    def test_steps_have_no_uses(self):
         w = self._parse_workflow()
         steps = w["jobs"]["pr-policy"].get("steps", [])
-        labels = [s.get("name", "") for s in steps]
-        assert any("pr-policy.yml" in l for l in labels)
+        assert steps
+        for step in steps:
+            assert "uses" not in step
 
+    def test_validate_step_is_inline_heredoc(self):
+        w = self._parse_workflow()
+        run = w["jobs"]["pr-policy"]["steps"][0]["run"]
+        assert "<<'PY'" in run
+        assert "$PR_HEAD" in run and "$PR_BASE" in run
 
-class TestWorkflowSafetyWithoutYaml:
-    def test_no_pull_request_target(self):
-        checks = _grep_workflow_safety(WORKFLOW_PATH)
-        assert checks["no_pull_request_target"]
-
-    def test_contents_read_present(self):
-        checks = _grep_workflow_safety(WORKFLOW_PATH)
-        assert checks["contents_read"]
-
-    def test_job_name_present(self):
-        checks = _grep_workflow_safety(WORKFLOW_PATH)
-        assert checks["has_pr_policy_job"]
-
-    def test_on_pull_request(self):
-        checks = _grep_workflow_safety(WORKFLOW_PATH)
-        assert checks["uses_pull_request_trigger"]
+    def test_validate_step_binds_event_head_base(self):
+        w = self._parse_workflow()
+        env = w["jobs"]["pr-policy"]["steps"][0]["env"]
+        assert env["PR_HEAD"] == "${{ github.event.pull_request.head.ref }}"
+        assert env["PR_BASE"] == "${{ github.event.pull_request.base.ref }}"
 
 
 # ========================================================================

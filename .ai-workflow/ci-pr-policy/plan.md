@@ -1,3 +1,12 @@
+run_id: ci-pr-policy
+created_at: 2026-09-13T15:47:00-03:00
+producer: opencode
+status: implementado
+source_refs:
+  - skill:pipeline-multiagente-de-engenharia
+  - branch:pre-develop/ci-pr-policy
+  - base:origin/develop@6ed2d5c09639a86c57c387ed9a7eb077e12798d1
+
 # Plano — Política de fluxo pré-develop (CI + `pr-policy`)
 
 ## Contexto
@@ -29,3 +38,13 @@
 4. Atualizar `docs/ci-cd.md` e `AGENTS.md`.
 5. Rodar testes (com e sem PyYAML), corrigir falhas, registrar `verification.log`.
 6. Criar `.ai-workflow/ci-pr-policy/*` e commit local.
+
+## Atualização corretiva (2º commit)
+
+A decisão nº 2 foi corrigida na implementação: o events triggers passa a ser
+`pull_request_target` (não `pull_request`) com **lógica inline** — sem checkout,
+sem pip e sem executar código do head. Isso elimina a execução de código não
+confiável do PR que existia ao rodar `scripts/validate_pr_policy.py`,
+deslocou `scripts/validate_pr_policy.py` para validação local e adicionou testes
+de consistência/segurança em `scripts/test_pr_policy.py`. Bootstrap documentado
+em `docs/ci-cd.md`.
